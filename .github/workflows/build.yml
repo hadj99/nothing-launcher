@@ -1,4 +1,4 @@
-name: Build APK
+name: Build & Publish APK
 
 on:
   push:
@@ -7,11 +7,79 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
-  build:
+  publish-prebuilt:
+    name: Publish APK to Releases & Packages
     runs-on: ubuntu-latest
+    outputs:
+      rebuild: ${{ steps.changes.outputs.rebuild }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
 
+      - name: Check if source changed
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          elif [ ! -f DotOS-Launcher-v1.0.apk ]; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          elif git rev-parse HEAD~1 >/dev/null 2>&1 && git diff --name-only HEAD~1 HEAD | grep -qE '\.(kt|kts|xml|toml|pro|properties)$'; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish prebuilt APK to GitHub Releases
+        if: steps.changes.outputs.rebuild == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 DotOS-Launcher-v1.0.apk --clobber
+          else
+            gh release create v1.0.0 DotOS-Launcher-v1.0.apk \
+              --target "${{ github.sha }}" \
+              --title "DotOS Launcher v1.0" \
+              --notes "Installable Android APK for **DotOS Launcher** (Android 7.0+ / API 24+). Tap **DotOS-Launcher-v1.0.apk** below under Assets to download and install on your Android phone."
+          fi
+
+      - name: Publish prebuilt APK to GitHub Packages
+        if: steps.changes.outputs.rebuild == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'EOF'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GH_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+          REPO_LOWER=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          mvn -B deploy:deploy-file \
+            -DgroupId=com.aistudio.dotoslauncher \
+            -DartifactId=dotos-launcher \
+            -Dversion=1.0.${GITHUB_RUN_NUMBER} \
+            -Dpackaging=apk \
+            -Dfile=DotOS-Launcher-v1.0.apk \
+            -DrepositoryId=github \
+            -Durl="https://maven.pkg.github.com/${REPO_LOWER}"
+
+  build-from-source:
+    name: Build APK from Source
+    needs: publish-prebuilt
+    if: needs.publish-prebuilt.outputs.rebuild == 'true'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -53,39 +121,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug and Release APKs
-        run: |
-          set +e
-          ./gradlew assembleDebug assembleRelease --stacktrace > build-output.log 2>&1
-          code=$?
-          tail -n 60 build-output.log
-          exit $code
-
-      - name: Report build failure
-        if: failure()
-        run: |
-          set +e
-          if [ ! -f build-output.log ]; then
-            echo "::error::Gradle build failed (no build-output.log found)."
-            exit 0
-          fi
-          {
-            echo "=== FAILURE SUMMARY ==="
-            grep -E "FAILURE:|What went wrong|Execution failed|Caused by" build-output.log | head -n 40
-            echo ""
-            echo "=== WHAT WENT WRONG (detail) ==="
-            sed -n '/What went wrong/,/^\* Try/p' build-output.log | head -n 40
-            echo ""
-            echo "=== KOTLIN ERRORS ==="
-            grep -E "^e: |\.kt:[0-9]+:[0-9]+: error" build-output.log | head -n 60
-            echo ""
-            echo "=== FAILED TASKS ==="
-            grep -E "FAILED" build-output.log | head -n 20
-          } > failure-summary.txt
-          esc() { sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g'; }
-          split -b 2200 failure-summary.txt chunk_
-          for f in chunk_*; do
-            echo "::error::$(cat "$f" | esc)"
-          done
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
 
       - name: Verify APK signatures and stage output
         run: |
@@ -94,48 +130,49 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk dist/DotOS-Launcher-v1.0-debug.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.0.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.0-debug.apk
-          ls -lh dist/
 
-      - name: Upload APKs
+      - name: Upload APKs Artifact
         uses: actions/upload-artifact@v7
         with:
           name: dotos-launcher-apks
           path: dist/*.apk
           if-no-files-found: error
 
-      - name: Publish APK manifest for retrieval
+      - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 - <<'PY'
-          import base64, hashlib, json, os, subprocess
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 dist/DotOS-Launcher-v1.0.apk dist/DotOS-Launcher-v1.0-debug.apk --clobber
+          else
+            gh release create v1.0.0 dist/DotOS-Launcher-v1.0.apk dist/DotOS-Launcher-v1.0-debug.apk \
+              --target "${{ github.sha }}" \
+              --title "DotOS Launcher v1.0" \
+              --notes "Installable Android APKs for **DotOS Launcher** (Android 7.0+ / API 24+)."
+          fi
 
-          apk_path = "dist/DotOS-Launcher-v1.0.apk"
-          with open(apk_path, "rb") as f:
-              data = f.read()
-          sha256 = hashlib.sha256(data).hexdigest()
-          chunk_size = 6 * 1024 * 1024
-          repo = os.environ["GITHUB_REPOSITORY"]
-          shas = []
-          for i in range(0, len(data), chunk_size):
-              chunk = data[i:i + chunk_size]
-              with open("/tmp/blob_payload.json", "w") as pf:
-                  json.dump({
-                      "content": base64.b64encode(chunk).decode("ascii"),
-                      "encoding": "base64"
-                  }, pf)
-              sha = subprocess.check_output([
-                  "gh", "api", f"repos/{repo}/git/blobs",
-                  "--method", "POST",
-                  "--input", "/tmp/blob_payload.json",
-                  "--jq", ".sha"
-              ], text=True).strip()
-              shas.append(sha)
-          manifest = {
-              "apk": os.path.basename(apk_path),
-              "size": len(data),
-              "sha256": sha256,
-              "blobs": shas,
-          }
-          print(f"::notice title=APK_MANIFEST::{json.dumps(manifest)}")
-          PY
+      - name: Publish to GitHub Packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'EOF'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GH_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+          REPO_LOWER=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          mvn -B deploy:deploy-file \
+            -DgroupId=com.aistudio.dotoslauncher \
+            -DartifactId=dotos-launcher \
+            -Dversion=1.0.${GITHUB_RUN_NUMBER} \
+            -Dpackaging=apk \
+            -Dfile=dist/DotOS-Launcher-v1.0.apk \
+            -DrepositoryId=github \
+            -Durl="https://maven.pkg.github.com/${REPO_LOWER}"
