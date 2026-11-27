@@ -1,8 +1,8 @@
-name: Build Debug APK
+name: Build APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "arena/19c7b403-nothing-launcher" ]
   workflow_dispatch:
 
 jobs:
@@ -19,14 +19,24 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Set up Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/cmdline-tools" || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: Build Debug and Release APKs
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v7
         with:
-          name: launcher-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: dotos-launcher-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

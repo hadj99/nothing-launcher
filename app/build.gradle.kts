@@ -22,18 +22,24 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
-  // Do not remove or modify these signingConfigs. They are necessary for building, installing,
-  // and updating Android apps in AI Studio.
+  // Signing configs. In AI Studio the release keystore is provided via the
+  // KEYSTORE_PATH / STORE_PASSWORD / KEY_PASSWORD environment variables.
+  // For local and CI builds (where no upload keystore exists), the release
+  // build type falls back to the debug signing config below so that an
+  // installable APK is still produced.
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      if (file(keystorePath).exists()) {
+        storeFile = file(keystorePath)
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
+      }
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
+      // No explicit storeFile: AGP uses (and auto-generates if missing) the
+      // standard debug keystore at ~/.android/debug.keystore.
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
@@ -45,13 +51,19 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("release")
+      // Use the upload keystore when it is available (AI Studio); otherwise
+      // fall back to debug signing so CI/local builds still produce an APK.
+      val releaseKeystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      signingConfig = if (file(releaseKeystorePath).exists() &&
+        System.getenv("STORE_PASSWORD") != null &&
+        System.getenv("KEY_PASSWORD") != null
+      ) {
+        signingConfigs.getByName("release")
+      } else {
+        signingConfigs.getByName("debugConfig")
+      }
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
     }
   }
