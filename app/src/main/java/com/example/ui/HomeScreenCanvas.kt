@@ -10,6 +10,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
@@ -225,30 +227,7 @@ fun HomeScreenCanvas(
     }
 
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(settings.gestures, editLayoutMode) {
-                detectTapGestures(
-                    onTap = {
-                        if (editLayoutMode) editLayoutMode = false
-                    },
-                    onLongPress = {
-                        NothingHaptics.performConfirm(context, settings.physics)
-                        showHomeMenu = true
-                    },
-                    onDoubleTap = {
-                        NothingHaptics.performConfirm(context, settings.physics)
-                        onTriggerGesture(settings.gestures.doubleTap, cycleDock)
-                    }
-                )
-            }
-            .pointerInput(settings.gestures) {
-                detectTransformGestures { _, _, zoom, _ ->
-                    if (zoom > 1.25f || zoom < 0.78f) {
-                        onTriggerGesture(settings.gestures.pinchSpread, cycleDock)
-                    }
-                }
-            }
+        modifier = modifier.fillMaxSize()
     ) {
         // Live Wallpaper Layer (automatically paused when drawer/search/settings cover home)
         NothingLiveWallpaperCanvas(
@@ -338,13 +317,31 @@ fun HomeScreenCanvas(
                     ) {
                         Icon(Icons.Rounded.Search, "Universal Search", tint = palette.textPrimary)
                     }
-                    IconButton(
-                        onClick = { onOpenSettings(0) },
+                    Row(
                         modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("home_settings_button")
+                            .padding(start = 4.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.accent.copy(alpha = 0.18f))
+                            .border(1.dp, palette.accent.copy(alpha = 0.6f), RoundedCornerShape(999.dp))
+                            .clickable { onOpenSettings(0) }
+                            .padding(horizontal = 11.dp, vertical = 6.dp)
+                            .testTag("home_settings_button"),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.Tune, "Customize Everything", tint = palette.textPrimary)
+                        Icon(
+                            Icons.Rounded.Tune,
+                            "Launcher Settings",
+                            tint = palette.accent,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = "STUDIO",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 10.sp,
+                            letterSpacing = 0.8.sp,
+                            color = palette.accent
+                        )
                     }
                 }
             }
@@ -565,13 +562,37 @@ fun HomeScreenCanvas(
                                     if (editLayoutMode) editLayoutMode = false
                                 },
                                 onLongPress = {
-                                    enterEditMode()
+                                    NothingHaptics.performConfirm(context, settings.physics)
+                                    showHomeMenu = true
                                 },
                                 onDoubleTap = {
                                     NothingHaptics.performConfirm(context, settings.physics)
                                     onTriggerGesture(settings.gestures.doubleTap, cycleDock)
                                 }
                             )
+                        }
+                        .pointerInput(settings.gestures.pinchSpread) {
+                            // Two-finger pinch only. Never consumes single-finger drags, so pager
+                            // swiping and All Apps scrolling stay perfectly smooth.
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                var fired = false
+                                var initialDist = -1f
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pressed = event.changes.filter { it.pressed }
+                                    if (pressed.size >= 2) {
+                                        val dist = (pressed[0].position - pressed[1].position).getDistance()
+                                        if (initialDist < 0f) initialDist = dist
+                                        val ratio = if (initialDist > 0f) dist / initialDist else 1f
+                                        if (!fired && (ratio > 1.25f || ratio < 0.74f)) {
+                                            fired = true
+                                            onTriggerGesture(settings.gestures.pinchSpread, cycleDock)
+                                        }
+                                    }
+                                    if (event.changes.none { it.pressed }) break
+                                }
+                            }
                         }
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp),
@@ -808,8 +829,12 @@ fun HomeScreenCanvas(
                                             labelStyle = homeLabelStyle,
                                             onClick = { onAppClick(app) },
                                             onLongClick = { onAppLongPress(app) },
-                                            onSwipeUp = {
-                                                onTriggerGesture(settings.gestures.iconSwipeUp, cycleDock)
+                                            onSwipeUp = if (settings.gestures.iconSwipeUp ==
+                                                com.example.settingsstore.model.GestureAction.NONE
+                                            ) {
+                                                null
+                                            } else {
+                                                { onTriggerGesture(settings.gestures.iconSwipeUp, cycleDock) }
                                             },
                                             modifier = Modifier.fillMaxWidth()
                                         )
@@ -1097,6 +1122,7 @@ fun HomeScreenCanvas(
                 onAppLongPress = onAppLongPress,
                 onOpenSearch = onOpenSearch,
                 onOpenNewsSpace = onOpenNewsSpace,
+                onOpenSettings = onOpenSettings,
                 onBackToHome = { scope.launch { rootPagerState.animateScrollToPage(0) } }
             )
         }
@@ -1254,7 +1280,7 @@ private fun HomeAppTile(
     labelStyle: androidx.compose.ui.text.TextStyle,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onSwipeUp: () -> Unit,
+    onSwipeUp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
@@ -1293,14 +1319,20 @@ private fun HomeAppTile(
                 onClick = onClick,
                 onLongClick = onLongClick
             )
-            .pointerInput(Unit) {
-                var dy = 0f
-                detectDragGestures(
-                    onDragStart = { dy = 0f },
-                    onDrag = { _, dragAmount -> dy += dragAmount.y },
-                    onDragEnd = { if (abs(dy) > 65f && dy < 0f) onSwipeUp() }
-                )
-            }
+            .then(
+                if (onSwipeUp != null) {
+                    Modifier.pointerInput(onSwipeUp) {
+                        var dy = 0f
+                        detectDragGestures(
+                            onDragStart = { dy = 0f },
+                            onDrag = { _, dragAmount -> dy += dragAmount.y },
+                            onDragEnd = { if (abs(dy) > 65f && dy < 0f) onSwipeUp?.invoke() }
+                        )
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1535,6 +1567,7 @@ private fun AllAppsFeedPage(
     onAppLongPress: (IndexedApp) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenNewsSpace: () -> Unit,
+    onOpenSettings: (Int) -> Unit,
     onBackToHome: () -> Unit
 ) {
     val palette = LocalNothingPalette.current
@@ -1597,6 +1630,14 @@ private fun AllAppsFeedPage(
                     }
                     IconButton(onClick = onOpenSearch, modifier = Modifier.minimumInteractiveComponentSize()) {
                         Icon(Icons.Rounded.Search, "Search Everything", tint = palette.textPrimary)
+                    }
+                    IconButton(
+                        onClick = { onOpenSettings(0) },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("all_apps_settings_button")
+                    ) {
+                        Icon(Icons.Rounded.Tune, "Launcher Settings", tint = palette.accent)
                     }
                     IconButton(onClick = onBackToHome, modifier = Modifier.minimumInteractiveComponentSize()) {
                         Icon(Icons.Rounded.Close, "Back to Home", tint = palette.textPrimary)
@@ -1672,7 +1713,11 @@ private fun AllAppsFeedPage(
             )
         }
 
-        items(visibleApps.size) { index ->
+        items(
+            count = visibleApps.size,
+            key = { index -> visibleApps[index].packageName },
+            contentType = { "app_tile" }
+        ) { index ->
             val app = visibleApps[index]
             HomeAppTile(
                 app = app,
