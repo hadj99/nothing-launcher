@@ -82,9 +82,10 @@ fun NothingLiveWallpaperCanvas(
     }
 
     // User photo wallpaper: decoded once, dimmed by the configured scrim.
-    if (theme.wallpaperMode == WallpaperMode.CUSTOM_PHOTO && theme.wallpaperImageUri != null) {
+    val photoUri: String? = theme.wallpaperImageUri
+    if (theme.wallpaperMode == WallpaperMode.CUSTOM_PHOTO && photoUri != null) {
         PhotoWallpaperLayer(
-            uri = theme.wallpaperImageUri,
+            uri = photoUri,
             dim = theme.wallpaperImageDim,
             modifier = modifier.fillMaxSize()
         )
