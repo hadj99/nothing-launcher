@@ -1651,7 +1651,7 @@ private fun FolderGridContent(
     val palette = LocalNothingPalette.current
     val folderApps = folder.packageNames.mapNotNull { appMap[it] }
     val labelStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyHome)
-    val drawerNewPkgs = remember(iconVersion, settings.glowNewApps, settings.newAppGlowDays, allApps) {
+    val drawerNewPkgs = remember(iconVersion, settings.glowNewApps, settings.newAppGlowDays, folderApps) {
         if (settings.glowNewApps && settings.newAppGlowDays > 0) {
             appIndexer.newlyInstalledPackages(settings.newAppGlowDays)
         } else {
