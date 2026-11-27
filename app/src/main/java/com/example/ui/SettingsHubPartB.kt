@@ -83,6 +83,7 @@ import com.example.settingsstore.model.YearViewMode
 import com.example.settingsstore.repo.SettingsRepository
 import com.example.themeengine.LocalNothingPalette
 import com.example.themeengine.NothingTypographyEngine
+import java.util.Locale
 import com.example.widgethost.LauncherWidgetHostManager
 import kotlin.math.roundToInt
 
@@ -440,7 +441,7 @@ internal fun WidgetsAndContextTab(
     var editingRule by remember { mutableStateOf<ContextRule?>(null) }
     val wCfg = settings.widgetConfigFor(selectedWidget)
 
-    NothingSectionHeader("11 Custom Nothing Widgets", "Configure per-widget opacity, border, density & behavior")
+    NothingSectionHeader("15 Custom Nothing Widgets", "Configure per-widget opacity, border, density, precise location & behavior")
     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         CustomWidgetType.entries.forEach { wt ->
             NothingPillChip(
@@ -511,15 +512,123 @@ internal fun WidgetsAndContextTab(
         }
         CustomWidgetType.WEATHER -> {
             var city by remember(wCfg.weatherCity) { mutableStateOf(wCfg.weatherCity) }
+            var showLocationDialog by remember { mutableStateOf(false) }
+
+            Text(
+                text = when {
+                    wCfg.weatherCustomLat != null && wCfg.weatherCustomLon != null ->
+                        "PRECISE COORDINATES • " +
+                            String.format(Locale.US, "%.4f", wCfg.weatherCustomLat ?: 0.0) + ", " +
+                            String.format(Locale.US, "%.4f", wCfg.weatherCustomLon ?: 0.0)
+                    wCfg.weatherUsePreciseGps -> "PRECISE GPS FIX ENABLED"
+                    else -> "CITY MODE • ${wCfg.weatherCity}"
+                },
+                fontFamily = NothingTypographyEngine.ntype82Family,
+                fontSize = 10.5.sp,
+                color = palette.accent
+            )
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                NothingPillChip(
+                    label = "Detect GPS / Exact Location",
+                    selected = wCfg.weatherUsePreciseGps,
+                    onClick = { showLocationDialog = true }
+                )
+                NothingPillChip(
+                    label = "City Mode",
+                    selected = !wCfg.weatherUsePreciseGps && wCfg.weatherCustomLat == null,
+                    onClick = {
+                        updateWidget {
+                            it.copy(
+                                weatherUsePreciseGps = false,
+                                weatherCustomLat = null,
+                                weatherCustomLon = null
+                            )
+                        }
+                    }
+                )
+                NothingPillChip(
+                    label = "Enter Lat / Lon",
+                    selected = wCfg.weatherCustomLat != null,
+                    onClick = { showLocationDialog = true }
+                )
+            }
             OutlinedTextField(
                 value = city,
                 onValueChange = { c ->
                     city = c
                     updateWidget { it.copy(weatherCity = c) }
                 },
-                label = { Text("Fallback City Name") },
+                label = { Text("City / Fallback Name") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
+            )
+            if (showLocationDialog) {
+                com.example.customwidgets.PreciseWeatherLocationDialog(
+                    config = wCfg,
+                    weatherRepo = null,
+                    onApplyLocation = { updated -> updateWidget { updated } },
+                    onDismiss = { showLocationDialog = false }
+                )
+            }
+        }
+        CustomWidgetType.DIGITAL_AURA -> {
+            Text("AURA GEOMETRY (8 SELECTABLE SHAPES)", fontFamily = NothingTypographyEngine.ndot55Family, fontSize = 11.sp, color = palette.accent)
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.example.settingsstore.model.DigitalAuraShape.entries.forEach { shape ->
+                    NothingPillChip(
+                        label = shape.displayName,
+                        selected = wCfg.auraShape == shape,
+                        onClick = { updateWidget { it.copy(auraShape = shape) } }
+                    )
+                }
+            }
+            NothingSliderRow(
+                label = "Screen-Time Velocity Sensitivity",
+                value = wCfg.auraSensitivity,
+                valueRange = 0.5f..2.0f,
+                onValueChange = { v -> updateWidget { it.copy(auraSensitivity = v) } },
+                valueFormatter = { "${(it * 100).roundToInt()}%" }
+            )
+        }
+        CustomWidgetType.COUNTDOWN_DECK -> {
+            var title by remember(wCfg.countdownTitle) { mutableStateOf(wCfg.countdownTitle) }
+            OutlinedTextField(
+                value = title,
+                onValueChange = { t ->
+                    title = t
+                    updateWidget { it.copy(countdownTitle = t) }
+                },
+                label = { Text("Countdown Title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            NothingSliderRow(
+                label = "Days From Now",
+                value = wCfg.countdownDaysFromNow.toFloat(),
+                valueRange = 1f..365f,
+                onValueChange = { v -> updateWidget { it.copy(countdownDaysFromNow = v.roundToInt()) } },
+                valueFormatter = { "${it.roundToInt()} days" }
+            )
+        }
+        CustomWidgetType.NEWS_HEADLINES -> {
+            Text(
+                text = "Live BBC / Hacker News headlines across 5 categories. Tap the widget to open News Space.",
+                fontSize = 11.5.sp,
+                color = palette.textSecondary
+            )
+        }
+        CustomWidgetType.QUICK_NOTES -> {
+            Text(
+                text = "Sticky note pad stored locally in DataStore. Tap the widget to write or edit instantly.",
+                fontSize = 11.5.sp,
+                color = palette.textSecondary
+            )
+        }
+        CustomWidgetType.SYSTEM_MONITOR -> {
+            Text(
+                text = "Live RAM, internal storage and display refresh-rate gauges refreshed every few seconds.",
+                fontSize = 11.5.sp,
+                color = palette.textSecondary
             )
         }
         CustomWidgetType.QUICK_SETTINGS -> {
@@ -558,15 +667,6 @@ internal fun WidgetsAndContextTab(
                 label = "Show Moonrise / Moonset Times",
                 checked = wCfg.showMoonTimes,
                 onCheckedChange = { v -> updateWidget { it.copy(showMoonTimes = v) } }
-            )
-        }
-        CustomWidgetType.DIGITAL_AURA -> {
-            NothingSliderRow(
-                label = "Screen-Time Velocity Sensitivity",
-                value = wCfg.auraSensitivity,
-                valueRange = 0.5f..2.0f,
-                onValueChange = { v -> updateWidget { it.copy(auraSensitivity = v) } },
-                valueFormatter = { "${(it * 100).roundToInt()}%" }
             )
         }
         CustomWidgetType.MEDIA_VINYL -> {

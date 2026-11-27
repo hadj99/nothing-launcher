@@ -108,9 +108,10 @@ data class GridGeometryConfig(
     val verticalPaddingDp: Float = 10f,
     val marginDp: Float = 12f,
     val showMostUsedSection: Boolean = true,
-    val dockPageCount: Int = 2,
+    val showAppLabels: Boolean = true,
+    val dockPageCount: Int = 1,
     val dockSlotsPerPage: Int = 5,
-    val dockMiniChips: List<DockMiniChipType> = listOf(DockMiniChipType.FOCUS_MINI)
+    val dockMiniChips: List<DockMiniChipType> = emptyList()
 )
 
 @Immutable
@@ -251,12 +252,12 @@ enum class GestureAction(val displayName: String) {
 @Immutable
 @JsonClass(generateAdapter = true)
 data class GestureConfig(
-    val swipeUp: GestureAction = GestureAction.OPEN_DRAWER,
-    val swipeDown: GestureAction = GestureAction.OPEN_SEARCH,
+    val swipeUp: GestureAction = GestureAction.NONE,
+    val swipeDown: GestureAction = GestureAction.NONE,
     val dockSwipeLeftRight: GestureAction = GestureAction.NEXT_DOCK_PAGE,
     val doubleTap: GestureAction = GestureAction.TOGGLE_DEEP_FOCUS,
     val pinchSpread: GestureAction = GestureAction.OPEN_SETTINGS,
-    val iconSwipeUp: GestureAction = GestureAction.OPEN_SEARCH,
+    val iconSwipeUp: GestureAction = GestureAction.NONE,
     val deviceShake: GestureAction = GestureAction.TOGGLE_FLASHLIGHT
 )
 
@@ -271,9 +272,27 @@ enum class BadgeStyle(val displayName: String) {
 @Immutable
 enum class WallpaperMode(val displayName: String) {
     DOT_MATRIX_GRID("Dot-Matrix Grid"),
+    STARFIELD_WARP("Starfield Warp"),
+    CYBER_HORIZON("Cyber Grid Horizon"),
+    AURORA_RIBBONS("Aurora Waves"),
+    ORBITAL_CONSTELLATION("Constellation"),
+    PLASMA_RINGS("Concentric Glyph"),
+    METEOR_RAIN("Digital Rain"),
     TOPOGRAPHIC_CONTOURS("Topographic Contours"),
     FROSTED_GLASS("Frosted Glass"),
     OLED_PURE_BLACK("OLED Battery Saver")
+}
+
+@Immutable
+enum class DigitalAuraShape(val displayName: String) {
+    ORGANIC_RING("Organic Ring"),
+    SACRED_HEXAGON("Sacred Hexagon"),
+    PULSAR_STAR("Pulsar Star"),
+    VORTEX_SPIRAL("Vortex Spiral"),
+    INFINITY_LOOP("Infinity Loop"),
+    EQUALIZER_MATRIX("Pulse Equalizer"),
+    DIAMOND_CORE("Diamond Core"),
+    RADAR_SWEEP("Glyph Radar")
 }
 
 @Immutable
@@ -327,9 +346,13 @@ data class SurfaceThemeConfig(
 
 @Immutable
 enum class CustomWidgetType(val displayName: String, val subtitle: String) {
-    DIGITAL_AURA("Digital Aura", "Focus pulse & screen-time velocity"),
+    DIGITAL_AURA("Digital Aura", "8 aura shapes & screen-time pulse"),
     TIME_DATE("Time & Date", "Dot-clock & dual timezone"),
-    WEATHER("Weather", "Glyph forecast & hourly dot chart"),
+    WEATHER("Weather", "Precise GPS / City forecast & hourly chart"),
+    NEWS_HEADLINES("News Pulse", "Live tech & world news headlines"),
+    QUICK_NOTES("Quick Notes", "Instant dot-matrix sticky note pad"),
+    SYSTEM_MONITOR("System Matrix", "Live RAM, storage & display Hz"),
+    COUNTDOWN_DECK("Event Countdown", "Target days-remaining dot matrix"),
     STEP_COUNTER("Step Counter", "Live pedometer & goal ring"),
     STEP_ANALYTICS("Step Analytics", "7-day dot/bar progress & streak"),
     MOON_PHASE("Moon Phase", "Lunar illumination & rise/set"),
@@ -380,7 +403,10 @@ data class WidgetAppearanceConfig(
     val timeFormatMode: TimeFormatMode = TimeFormatMode.VERTICAL_DOT,
     val showMoonTimes: Boolean = true,
     val showWeatherExtras: Boolean = true,
-    val weatherCity: String = "San Francisco",
+    val weatherCity: String = "Oran",
+    val weatherUsePreciseGps: Boolean = true,
+    val weatherCustomLat: Double? = null,
+    val weatherCustomLon: Double? = null,
     val quickSettingToggles: List<QuickToggleItem> = listOf(
         QuickToggleItem.WIFI,
         QuickToggleItem.BLUETOOTH,
@@ -390,9 +416,12 @@ data class WidgetAppearanceConfig(
     ),
     val yearViewMode: YearViewMode = YearViewMode.DOT_MATRIX_365,
     val auraSensitivity: Float = 1.0f,
+    val auraShape: DigitalAuraShape = DigitalAuraShape.ORGANIC_RING,
     val pomodoroFocusMinutes: Int = 25,
     val pomodoroBreakMinutes: Int = 5,
-    val mediaShowVisualizer: Boolean = true
+    val mediaShowVisualizer: Boolean = true,
+    val countdownTitle: String = "NEXT MILESTONE",
+    val countdownDaysFromNow: Int = 30
 )
 
 @Immutable
@@ -512,6 +541,9 @@ data class LauncherSettings(
     val gestures: GestureConfig = GestureConfig(),
     val badgeStyle: BadgeStyle = BadgeStyle.DOT_MATRIX_COUNT,
     val theme: SurfaceThemeConfig = SurfaceThemeConfig(),
+    val schemaVersion: Int = 3,
+    val fullScreenHideStatusBar: Boolean = true,
+    val quickNoteText: String = "Tap to jot down quick ideas, tasks, or reminders...",
     val deepFocusActive: Boolean = false,
     val vaultPinHash: String = "0000",
     val activeProfileName: String = "Default",

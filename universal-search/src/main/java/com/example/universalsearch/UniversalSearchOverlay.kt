@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -55,9 +56,13 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import java.util.Locale
+import kotlin.random.Random
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -100,8 +105,11 @@ fun UniversalSearchOverlay(
     onToggleIncognito: () -> Unit,
     onClearHistory: () -> Unit,
     onDismiss: () -> Unit,
+    onCommitQuery: (String) -> Unit = {},
+    onToggleTorch: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    BackHandler { onDismiss() }
     val context = LocalContext.current
     val palette = LocalNothingPalette.current
     val searchTextStyle = remember(settings.typographySearch) {
@@ -187,12 +195,16 @@ fun UniversalSearchOverlay(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
                             onSearch = {
+                                val trimmed = query.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    onCommitQuery(trimmed)
+                                }
                                 val firstApp = searchState.appMatches.firstOrNull()
                                 if (firstApp != null) {
                                     onLaunchApp(firstApp)
-                                } else {
+                                } else if (trimmed.isNotEmpty()) {
                                     searchState.webEngines.firstOrNull()?.let {
-                                        searchEngine.executeWebSearch(it, query)
+                                        searchEngine.executeWebSearch(it, trimmed)
                                     }
                                 }
                             }
@@ -202,6 +214,34 @@ fun UniversalSearchOverlay(
                             .focusRequester(focusRequester)
                             .testTag("universal_search_input")
                     )
+                }
+                if (query.trim().isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.accent)
+                            .clickable {
+                                val trimmed = query.trim()
+                                onCommitQuery(trimmed)
+                                val firstApp = searchState.appMatches.firstOrNull()
+                                if (firstApp != null) {
+                                    onLaunchApp(firstApp)
+                                } else {
+                                    searchState.webEngines.firstOrNull()?.let {
+                                        searchEngine.executeWebSearch(it, trimmed)
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "GO",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 10.sp,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                 }
                 IconButton(
                     onClick = onToggleIncognito,
@@ -232,8 +272,18 @@ fun UniversalSearchOverlay(
 
         if (!barAtBottom) {
             SearchBarField()
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
         }
+
+        // Quick Tools Deck above search results & history
+        SearchQuickToolsDeck(
+            query = query,
+            onSetQuery = onQueryChange,
+            onFireTimerSeconds = { secs -> searchEngine.fireTimer(UtilityResult.QuickTimer("${secs / 60}m", secs)) },
+            onToggleTorch = onToggleTorch,
+            onOpenSettings = { onOpenLauncherSettingsTab(0) }
+        )
+        Spacer(Modifier.height(8.dp))
 
         // Web & In-App Search Pills
         if (query.isNotBlank() && searchState.webEngines.isNotEmpty()) {
@@ -247,7 +297,10 @@ fun UniversalSearchOverlay(
                     NothingPillChip(
                         label = "${engine.name}: $query",
                         selected = false,
-                        onClick = { searchEngine.executeWebSearch(engine, query) }
+                        onClick = {
+                            onCommitQuery(query.trim())
+                            searchEngine.executeWebSearch(engine, query)
+                        }
                     )
                 }
             }
@@ -657,6 +710,276 @@ private fun UtilityResultCard(
                     }
                 }
             }
+        }
+    }
+}
+
+private enum class QuickSearchTool(val label: String) {
+    CALC("Calculator"),
+    CONVERTER("Units & FX"),
+    STOPWATCH("Stopwatch"),
+    PASS_GEN("Pass / PIN"),
+    CLIPBOARD("Clipboard"),
+    RANDOM("Coin / Dice")
+}
+
+@Composable
+private fun SearchQuickToolsDeck(
+    query: String,
+    onSetQuery: (String) -> Unit,
+    onFireTimerSeconds: (Int) -> Unit,
+    onToggleTorch: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val context = LocalContext.current
+    val palette = LocalNothingPalette.current
+    var activeTool by remember { mutableStateOf<QuickSearchTool?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            QuickSearchTool.entries.forEach { tool ->
+                NothingPillChip(
+                    label = tool.label,
+                    selected = activeTool == tool,
+                    onClick = { activeTool = if (activeTool == tool) null else tool }
+                )
+            }
+            NothingPillChip(
+                label = "Torch",
+                selected = false,
+                onClick = onToggleTorch
+            )
+            NothingPillChip(
+                label = "Studio",
+                selected = false,
+                onClick = onOpenSettings
+            )
+        }
+
+        when (activeTool) {
+            QuickSearchTool.CALC -> {
+                NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "QUICK MATH PAD (AUTO-EVALUATES BELOW)",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 10.sp,
+                            color = palette.accent
+                        )
+                        val ops = listOf("7", "8", "9", "+", "(", "4", "5", "6", "-", ")", "1", "2", "3", "*", "/", "0", ".", "%", " * 0.15", "CLR")
+                        ops.chunked(5).forEach { row ->
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                row.forEach { token ->
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (token == "CLR") palette.accent.copy(alpha = 0.22f) else palette.background)
+                                            .border(1.dp, palette.borderSubtle, RoundedCornerShape(10.dp))
+                                            .clickable {
+                                                if (token == "CLR") onSetQuery("")
+                                                else onSetQuery(query + token)
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (token == " * 0.15") "15%" else token,
+                                            fontFamily = NothingTypographyEngine.ntype82Family,
+                                            fontSize = 12.sp,
+                                            color = palette.textPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            QuickSearchTool.CONVERTER -> {
+                NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("1-TAP CONVERSIONS", fontFamily = NothingTypographyEngine.ndot55Family, fontSize = 10.sp, color = palette.accent)
+                        val presets = listOf(
+                            "100 USD to DZD",
+                            "100 EUR to DZD",
+                            "10 km to miles",
+                            "30 C to F",
+                            "75 kg to lb",
+                            "100 USD to EUR"
+                        )
+                        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            presets.forEach { p ->
+                                NothingPillChip(label = p, selected = query == p, onClick = { onSetQuery(p) })
+                            }
+                        }
+                    }
+                }
+            }
+
+            QuickSearchTool.STOPWATCH -> {
+                var running by remember { mutableStateOf(false) }
+                var elapsedDecisec by remember { mutableLongStateOf(0L) }
+                LaunchedEffect(running) {
+                    while (running) {
+                        delay(100L)
+                        elapsedDecisec++
+                    }
+                }
+                val mins = (elapsedDecisec / 600L)
+                val secs = (elapsedDecisec / 10L) % 60L
+                val tenths = elapsedDecisec % 10L
+
+                NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = String.format(Locale.US, "%02d:%02d.%d", mins, secs, tenths),
+                                fontFamily = NothingTypographyEngine.ndot77Family,
+                                fontSize = 24.sp,
+                                color = palette.textPrimary
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                NothingPillChip(
+                                    label = if (running) "Pause" else "Start",
+                                    selected = running,
+                                    onClick = { running = !running }
+                                )
+                                NothingPillChip(
+                                    label = "Reset",
+                                    selected = false,
+                                    onClick = {
+                                        running = false
+                                        elapsedDecisec = 0L
+                                    }
+                                )
+                            }
+                        }
+                        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(1 to "1m Timer", 5 to "5m Timer", 10 to "10m Timer", 25 to "25m Focus").forEach { (m, lbl) ->
+                                NothingPillChip(label = lbl, selected = false, onClick = { onFireTimerSeconds(m * 60) })
+                            }
+                        }
+                    }
+                }
+            }
+
+            QuickSearchTool.PASS_GEN -> {
+                val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*"
+                var generated by remember {
+                    mutableStateOf((1..16).map { chars[Random.nextInt(chars.length)] }.joinToString(""))
+                }
+                NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("GENERATED KEY", fontFamily = NothingTypographyEngine.ndot55Family, fontSize = 10.sp, color = palette.accent)
+                            Text(generated, fontFamily = NothingTypographyEngine.ntype82Family, fontSize = 14.sp, color = palette.textPrimary)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            NothingPillChip(
+                                label = "16-Char",
+                                selected = false,
+                                onClick = {
+                                    generated = (1..16).map { chars[Random.nextInt(chars.length)] }.joinToString("")
+                                }
+                            )
+                            NothingPillChip(
+                                label = "6-PIN",
+                                selected = false,
+                                onClick = {
+                                    generated = (1..6).map { Random.nextInt(0, 10) }.joinToString("")
+                                }
+                            )
+                            NothingPillChip(
+                                label = "Copy",
+                                selected = true,
+                                onClick = {
+                                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cb.setPrimaryClip(ClipData.newPlainText("DotOS Key", generated))
+                                    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            QuickSearchTool.CLIPBOARD -> {
+                val clipText = remember(activeTool) {
+                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    cb?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                }
+                NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = clipText.ifBlank { "Clipboard is currently empty" },
+                            fontSize = 12.sp,
+                            color = palette.textPrimary,
+                            maxLines = 2,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        )
+                        if (clipText.isNotBlank()) {
+                            NothingPillChip(label = "Use in Search", selected = true, onClick = { onSetQuery(clipText) })
+                        }
+                    }
+                }
+            }
+
+            QuickSearchTool.RANDOM -> {
+                var resultText by remember { mutableStateOf("Tap Coin or Dice") }
+                NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = resultText,
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 15.sp,
+                            color = palette.accent
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            NothingPillChip(
+                                label = "Flip Coin",
+                                selected = false,
+                                onClick = { resultText = if (Random.nextBoolean()) "COIN: HEADS" else "COIN: TAILS" }
+                            )
+                            NothingPillChip(
+                                label = "Roll D6",
+                                selected = false,
+                                onClick = { resultText = "DICE: ${Random.nextInt(1, 7)}" }
+                            )
+                            NothingPillChip(
+                                label = "1–100",
+                                selected = false,
+                                onClick = { resultText = "PICK: ${Random.nextInt(1, 101)}" }
+                            )
+                        }
+                    }
+                }
+            }
+
+            null -> Unit
         }
     }
 }

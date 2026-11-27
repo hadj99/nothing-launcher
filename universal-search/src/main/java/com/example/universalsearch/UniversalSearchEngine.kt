@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,7 +86,15 @@ class UniversalSearchEngine(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val recentQueries: Flow<List<String>> = searchHistoryDao.observeHistory().map { list ->
-        list.map { it.queryText }
+        val raw = list.map { it.queryText.trim() }.filter { it.length >= 2 }
+        // Automatically suppress any legacy keystroke-prefix spam (e.g. "ph", "pho", "phon" before "phone")
+        raw.filterIndexed { idx, q ->
+            val prev = raw.getOrNull(idx - 1)
+            val next = raw.getOrNull(idx + 1)
+            val isPrefixOfPrev = prev != null && !prev.equals(q, ignoreCase = true) && prev.startsWith(q, ignoreCase = true)
+            val isPrefixOfNext = next != null && !next.equals(q, ignoreCase = true) && next.startsWith(q, ignoreCase = true)
+            !isPrefixOfPrev && !isPrefixOfNext
+        }.distinct()
     }
 
     val recentClipboard: Flow<List<ClipboardSnippetResult>> = clipboardDao.observeSnippets().map { list ->
@@ -143,8 +152,35 @@ class UniversalSearchEngine(private val context: Context) {
     }
 
     suspend fun recordQuery(query: String, incognito: Boolean) {
-        if (incognito || query.isBlank()) return
-        searchHistoryDao.recordQuery(SearchHistoryEntity(query.trim()))
+        if (incognito) return
+        val clean = query.trim()
+        // v1.3: only real submissions are stored — never intermediate keystroke prefixes.
+        if (clean.length < 2) return
+        // Drop any longer query that is merely a prefix extension of this one and vice versa.
+        val existing = recentQueries.first()
+        existing.filter { it.length < clean.length && clean.startsWith(it, ignoreCase = true) }
+            .forEach { stale -> removeQuery(stale) }
+        searchHistoryDao.recordQuery(SearchHistoryEntity(clean))
+    }
+
+    private suspend fun removeQuery(query: String) {
+        searchHistoryDao.deleteQuery(query)
+    }
+
+    /** One-shot cleanup of legacy keystroke spam ("p", "ph", "pho", "phon", ...) at startup. */
+    fun pruneLegacyPrefixHistory() {
+        scope.launch {
+            runCatching {
+                val history = recentQueries.first()
+                history.forEachIndexed { idx, q ->
+                    val prev = history.getOrNull(idx - 1)
+                    val next = history.getOrNull(idx + 1)
+                    val isPrefix = (prev != null && prev.startsWith(q, ignoreCase = true) && !prev.equals(q, true)) ||
+                        (next != null && next.startsWith(q, ignoreCase = true) && !next.equals(q, true))
+                    if (isPrefix) removeQuery(q)
+                }
+            }
+        }
     }
 
     suspend fun clearHistory() {

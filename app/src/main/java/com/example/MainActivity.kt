@@ -31,8 +31,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -56,6 +54,9 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.example.animationphysics.LauncherPhysicsEngine
 import com.example.animationphysics.ShakeGestureObserver
 import com.example.appindexer.IndexedApp
@@ -70,7 +71,7 @@ import com.example.themeengine.DotLauncherTheme
 import com.example.themeengine.LocalNothingPalette
 import com.example.themeengine.NothingTypographyEngine
 import com.example.ui.AmbientAodOverlay
-import com.example.ui.AppDrawerSheet
+import com.example.ui.NewsSpaceOverlay
 import com.example.ui.BiometricVaultSheet
 import com.example.ui.HomeScreenCanvas
 import com.example.ui.LongPressAppMenuDialog
@@ -188,7 +189,6 @@ class MainActivity : ComponentActivity() {
             val searchState by viewModel.searchState.collectAsState()
             val recentQueries by viewModel.recentQueries.collectAsState()
             val isSearchVisible by viewModel.isSearchVisible.collectAsState()
-            val isDrawerVisible by viewModel.isDrawerVisible.collectAsState()
             val isSettingsVisible by viewModel.isSettingsVisible.collectAsState()
             val settingsInitialTab by viewModel.settingsInitialTab.collectAsState()
             val isVaultVisible by viewModel.isVaultVisible.collectAsState()
@@ -208,12 +208,24 @@ class MainActivity : ComponentActivity() {
             val mediaState by viewModel.mediaState.collectAsState()
             val contextHiddenPackages by viewModel.contextHiddenPackages.collectAsState()
             val isAmbientAodVisible by viewModel.isAmbientAodVisible.collectAsState()
+            val isNewsVisible by viewModel.isNewsVisible.collectAsState()
+            val allAppsRequestTick by viewModel.allAppsRequestTick.collectAsState()
 
-            val drawerGridState = rememberLazyGridState()
-            val drawerListState = rememberLazyListState()
+            val anyOverlayOpen = isSearchVisible || isSettingsVisible ||
+                isVaultVisible || isAmbientAodVisible || isNewsVisible
 
-            val anyOverlayOpen = isDrawerVisible || isSearchVisible || isSettingsVisible ||
-                isVaultVisible || isAmbientAodVisible
+            // Immersive full-screen: hide the system status bar (battery, Wi-Fi, notification icons)
+            // while still letting the user reveal it with an edge swipe.
+            LaunchedEffect(settings.fullScreenHideStatusBar) {
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                if (settings.fullScreenHideStatusBar) {
+                    controller.systemBarsBehavior =
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    controller.hide(WindowInsetsCompat.Type.statusBars())
+                } else {
+                    controller.show(WindowInsetsCompat.Type.statusBars())
+                }
+            }
 
             var btPermissionTick by remember { mutableStateOf(0) }
             val hasBtPermission = remember(btPermissionTick) {
@@ -236,28 +248,10 @@ class MainActivity : ComponentActivity() {
 
             val handleAppClick = remember(viewModel) { { app: IndexedApp -> viewModel.onAppClicked(app) } }
             val handleAppLongPress = remember { { app: IndexedApp -> longPressedApp = app } }
-            val handleOpenDrawer = remember(viewModel) { { viewModel.openDrawer() } }
-            val handleCloseDrawer = remember(viewModel) { { viewModel.closeDrawer() } }
+            val handleOpenAllApps = remember(viewModel) { { viewModel.requestAllAppsFeed() } }
             val handleOpenSearch = remember(viewModel) { { viewModel.openSearch() } }
             val handleOpenSettingsZero = remember(viewModel) { { viewModel.openSettings(0) } }
             val handleOpenVault = remember(viewModel) { { viewModel.requestOpenVault() } }
-
-            // Pre-warm AppDrawerSheet shortly after first frame so opening the drawer is 0ms instant
-            var drawerWarmReady by remember { mutableStateOf(false) }
-            LaunchedEffect(isDrawerVisible) {
-                if (isDrawerVisible) {
-                    drawerWarmReady = true
-                } else if (!drawerWarmReady) {
-                    delay(350L)
-                    drawerWarmReady = true
-                }
-            }
-
-            val drawerProgressState = animateFloatAsState(
-                targetValue = if (isDrawerVisible) 1f else 0f,
-                animationSpec = tween(durationMillis = if (isDrawerVisible) 155 else 130),
-                label = "drawer_progress"
-            )
 
             DotLauncherTheme(settings = settings) {
                 val palette = LocalNothingPalette.current
@@ -303,7 +297,7 @@ class MainActivity : ComponentActivity() {
                         onRequestBluetoothPermission = requestBtPermission,
                         onAppClick = handleAppClick,
                         onAppLongPress = handleAppLongPress,
-                        onOpenDrawer = handleOpenDrawer,
+                        allAppsRequestTick = allAppsRequestTick,
                         onOpenSearch = handleOpenSearch,
                         onOpenSettings = { tab -> viewModel.openSettings(tab) },
                         onOpenAmbientAod = { viewModel.openAmbientAod() },
@@ -315,6 +309,12 @@ class MainActivity : ComponentActivity() {
                         onToggleDeepFocus = { viewModel.toggleDeepFocus() },
                         onOpenUsageAccess = { viewModel.appIndexer.openUsageStatsSettings() },
                         onAddPage = { viewModel.addHomePage() },
+                        onRemovePage = { page -> viewModel.removeHomePage(page) },
+                        onAddWidgetToPage = { page, type -> viewModel.addCustomWidgetToPage(page, type) },
+                        onUpdateWidgetConfig = { type, tr -> viewModel.updateWidgetConfig(type, tr) },
+                        onSaveQuickNote = { text -> viewModel.saveQuickNote(text) },
+                        onOpenNewsSpace = { viewModel.openNewsSpace() },
+                        weatherRepo = viewModel.weatherRepo,
                         onMoveHomeApp = { page, pkg, delta -> viewModel.moveHomeApp(page, pkg, delta) },
                         onMoveHomeAppToPage = { fromPage, pkg, toPage -> viewModel.moveHomeAppToPage(fromPage, pkg, toPage) },
                         onOpenStackEditor = { slot -> editingStackSlot = slot },
@@ -326,53 +326,14 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints)
                             layout(placeable.width, placeable.height) {
-                                val coveredByOpaqueOverlay = drawerProgressState.value >= 0.999f ||
-                                    isSettingsVisible || isVaultVisible || isAmbientAodVisible
+                                val coveredByOpaqueOverlay =
+                                    isSettingsVisible || isVaultVisible || isAmbientAodVisible || isNewsVisible
                                 if (!coveredByOpaqueOverlay) {
                                     placeable.placeRelative(0, 0)
                                 }
                             }
                         }
                     )
-
-                    // App Drawer Overlay — kept warm in memory via placement-gating + pure GPU layer transform
-                    if (drawerWarmReady || isDrawerVisible) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .layout { measurable, constraints ->
-                                    val placeable = measurable.measure(constraints)
-                                    layout(placeable.width, placeable.height) {
-                                        if (drawerProgressState.value > 0.001f) {
-                                            placeable.placeRelative(0, 0)
-                                        }
-                                    }
-                                }
-                                .graphicsLayer {
-                                    val prog = drawerProgressState.value
-                                    alpha = prog
-                                    translationY = (1f - prog) * size.height * 0.14f
-                                }
-                        ) {
-                            AppDrawerSheet(
-                                apps = allApps,
-                                settings = settings,
-                                appIndexer = viewModel.appIndexer,
-                                iconVersion = iconVersion,
-                                badgeCounts = badgeCounts,
-                                contextHiddenPackages = contextHiddenPackages,
-                                gridState = drawerGridState,
-                                listState = drawerListState,
-                                onAppClick = handleAppClick,
-                                onAppLongPress = handleAppLongPress,
-                                onOpenSearch = handleOpenSearch,
-                                onOpenSettings = handleOpenSettingsZero,
-                                onOpenVault = handleOpenVault,
-                                onDismiss = handleCloseDrawer,
-                                isVisible = isDrawerVisible
-                            )
-                        }
-                    }
 
                     // Universal Multi-Source Search Overlay
                     AnimatedVisibility(
@@ -398,6 +359,12 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onClearHistory = { viewModel.clearSearchHistory() },
+                            onCommitQuery = { viewModel.commitSearchQuery(it) },
+                            onToggleTorch = {
+                                viewModel.contextEngine.triggerQuickToggle(
+                                    com.example.settingsstore.model.QuickToggleItem.FLASHLIGHT
+                                )
+                            },
                             onDismiss = { viewModel.closeSearch() }
                         )
                     }
@@ -456,6 +423,18 @@ class MainActivity : ComponentActivity() {
                             velocity = screenTimeVelocity,
                             totalNotificationCount = badgeCounts.values.sum(),
                             onDismiss = { viewModel.closeAmbientAod() }
+                        )
+                    }
+
+                    // Dedicated News Space (feed + headlines)
+                    AnimatedVisibility(
+                        visible = isNewsVisible,
+                        enter = slideInVertically(initialOffsetY = { it / 4 }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it / 4 }) + fadeOut()
+                    ) {
+                        NewsSpaceOverlay(
+                            settings = settings,
+                            onDismiss = { viewModel.closeNewsSpace() }
                         )
                     }
 

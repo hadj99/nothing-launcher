@@ -108,6 +108,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _isAmbientAodVisible = MutableStateFlow(false)
     val isAmbientAodVisible: StateFlow<Boolean> = _isAmbientAodVisible.asStateFlow()
 
+    private val _isNewsVisible = MutableStateFlow(false)
+    val isNewsVisible: StateFlow<Boolean> = _isNewsVisible.asStateFlow()
+
+    private val _allAppsRequestTick = MutableStateFlow(0)
+    val allAppsRequestTick: StateFlow<Int> = _allAppsRequestTick.asStateFlow()
+
+    fun requestAllAppsFeed() {
+        _allAppsRequestTick.value += 1
+    }
+
     private val _pendingFrictionApp = MutableStateFlow<IndexedApp?>(null)
     val pendingFrictionApp: StateFlow<IndexedApp?> = _pendingFrictionApp.asStateFlow()
 
@@ -209,6 +219,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun addCustomWidgetToPage(pageIndex: Int, widgetType: CustomWidgetType) {
+        updateSettings { cfg ->
+            val newSlot = WidgetStackSlot(
+                id = "stack_${System.currentTimeMillis()}",
+                pageIndex = pageIndex,
+                stackedCustomWidgets = listOf(widgetType),
+                heightDp = 156,
+                widthFraction = 1.0f,
+                contentScale = 1.0f
+            )
+            cfg.copy(widgetStacks = cfg.widgetStacks + newSlot)
+        }
+        showBanner("${widgetType.displayName} added to Page ${pageIndex + 1}")
+    }
+
     fun addWidgetSlot(pageIndex: Int) {
         updateSettings { cfg ->
             val newSlot = WidgetStackSlot(
@@ -273,9 +298,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun setSearchQuery(q: String) {
         _searchQuery.value = q
-        if (q.length >= 2) {
+    }
+
+    fun commitSearchQuery(q: String) {
+        val clean = q.trim()
+        if (clean.length >= 2) {
             viewModelScope.launch {
-                searchEngine.recordQuery(q, settings.value.searchConfig.incognitoMode)
+                searchEngine.recordQuery(clean, settings.value.searchConfig.incognitoMode)
             }
         }
     }
@@ -335,6 +364,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _isAmbientAodVisible.value = false
     }
 
+    fun openNewsSpace() {
+        _isNewsVisible.value = true
+    }
+
+    fun closeNewsSpace() {
+        _isNewsVisible.value = false
+    }
+
+    fun saveQuickNote(text: String) {
+        updateSettings { it.copy(quickNoteText = text) }
+    }
+
     fun toggleDeepFocus() {
         updateSettings { it.copy(deepFocusActive = !it.deepFocusActive) }
     }
@@ -364,8 +405,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun refreshWeather() {
         viewModelScope.launch {
-            val city = settings.value.widgetConfigFor(CustomWidgetType.WEATHER).weatherCity
-            weatherRepo.refreshWeather(city)
+            val wConfig = settings.value.widgetConfigFor(CustomWidgetType.WEATHER)
+            weatherRepo.refreshWeather(wConfig)
         }
     }
 
@@ -446,6 +487,44 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 homePageConfigs = configs
             )
         }
+        showBanner("New Home Page added")
+    }
+
+    fun removeHomePage(pageIndex: Int) {
+        val currentPages = settings.value.homeAppPages
+        if (currentPages.size <= 1 || pageIndex !in currentPages.indices) {
+            showBanner("Cannot remove the only remaining Home Page")
+            return
+        }
+        settings.value.widgetStacks
+            .filter { it.pageIndex == pageIndex }
+            .flatMap { it.stackedSystemWidgetIds }
+            .forEach { wid -> widgetHostManager.deleteWidgetId(wid) }
+
+        updateSettings { cfg ->
+            val pages = cfg.homeAppPages.toMutableList().apply { removeAt(pageIndex) }
+            val pageCfgs = cfg.homePageConfigs.toMutableList()
+            if (pageIndex in pageCfgs.indices) {
+                pageCfgs.removeAt(pageIndex)
+            }
+            val updatedStacks = cfg.widgetStacks
+                .filterNot { it.pageIndex == pageIndex }
+                .map { slot ->
+                    if (slot.pageIndex > pageIndex) slot.copy(pageIndex = slot.pageIndex - 1) else slot
+                }
+            val updatedFolders = cfg.folders
+                .filterNot { it.pageIndex == pageIndex }
+                .map { folder ->
+                    if (folder.pageIndex > pageIndex) folder.copy(pageIndex = folder.pageIndex - 1) else folder
+                }
+            cfg.copy(
+                homeAppPages = pages,
+                homePageConfigs = pageCfgs,
+                widgetStacks = updatedStacks,
+                folders = updatedFolders
+            )
+        }
+        showBanner("Page ${pageIndex + 1} removed")
     }
 
     fun moveHomeApp(pageIndex: Int, packageName: String, delta: Int) {
@@ -569,7 +648,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         when (action) {
             GestureAction.NONE -> Unit
             GestureAction.OPEN_SEARCH -> openSearch()
-            GestureAction.OPEN_DRAWER -> openDrawer()
+            GestureAction.OPEN_DRAWER -> requestAllAppsFeed()
             GestureAction.OPEN_SETTINGS -> openSettings(0)
             GestureAction.OPEN_VAULT -> requestOpenVault()
             GestureAction.TOGGLE_DEEP_FOCUS -> toggleDeepFocus()

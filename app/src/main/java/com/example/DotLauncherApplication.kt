@@ -36,6 +36,8 @@ class DotLauncherApplication : Application() {
         settingsRepository = SettingsRepository(this)
         appIndexer = AppIndexerRepository(this)
         searchEngine = UniversalSearchEngine(this)
+        // v1.3 one-shot cleanup of legacy keystroke-prefix history spam
+        searchEngine.pruneLegacyPrefixHistory()
         contextEngine = ContextAutomationEngine(this)
         stepRepository = StepCounterRepository(this)
         weatherRepository = WeatherRepository(this)

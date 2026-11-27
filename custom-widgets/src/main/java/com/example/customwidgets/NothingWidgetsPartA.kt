@@ -501,18 +501,17 @@ fun WeatherWidget(
     settings: LauncherSettings,
     weatherState: WeatherState,
     onRefreshWeather: () -> Unit,
+    weatherRepo: WeatherRepository? = null,
+    onUpdateWeatherConfig: ((WidgetAppearanceConfig) -> WidgetAppearanceConfig) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
     val scope = rememberCoroutineScope()
     val titleStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetTitle)
     val dataStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetData)
+    var showLocationDialog by remember { mutableStateOf(false) }
 
-    val locationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { onRefreshWeather() }
-
-    LaunchedEffect(config.weatherCity) {
+    LaunchedEffect(config.weatherCity, config.weatherUsePreciseGps, config.weatherCustomLat, config.weatherCustomLon) {
         if (weatherState.temperatureC == null && !weatherState.isLoading) {
             onRefreshWeather()
         }
@@ -530,10 +529,11 @@ fun WeatherWidget(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "${weatherState.cityLabel.uppercase()} • ${weatherState.conditionText}",
-                    style = titleStyle.copy(color = palette.textSecondary)
+                    style = titleStyle.copy(color = palette.textSecondary),
+                    modifier = Modifier.clickable { showLocationDialog = true }
                 )
                 val tempLabel = weatherState.temperatureC?.let { "${it.roundToInt()}°C" }
                     ?: if (weatherState.isLoading) "..." else "--°C"
@@ -632,15 +632,29 @@ fun WeatherWidget(
                     color = palette.textSecondary
                 )
                 Text(
-                    text = "GPS",
-                    fontFamily = NothingTypographyEngine.ntype82Family,
+                    text = "SET LOCATION",
+                    fontFamily = NothingTypographyEngine.ndot55Family,
                     fontSize = 10.sp,
                     color = palette.accent,
-                    modifier = Modifier.clickable {
-                        locationLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
-                    }
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(palette.accent.copy(alpha = 0.16f))
+                        .clickable { showLocationDialog = true }
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
         }
+    }
+
+    if (showLocationDialog) {
+        PreciseWeatherLocationDialog(
+            config = config,
+            weatherRepo = weatherRepo,
+            onApplyLocation = { updatedCfg ->
+                onUpdateWeatherConfig { updatedCfg }
+                onRefreshWeather()
+            },
+            onDismiss = { showLocationDialog = false }
+        )
     }
 }

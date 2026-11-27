@@ -54,6 +54,7 @@ import com.example.contextautomation.DeviceTelemetrySnapshot
 import com.example.coreui.NothingSurfaceCard
 import com.example.settingsstore.db.StepHistoryEntity
 import com.example.settingsstore.model.CustomWidgetType
+import com.example.settingsstore.model.DigitalAuraShape
 import com.example.settingsstore.model.LauncherSettings
 import com.example.settingsstore.model.QuickToggleItem
 import com.example.settingsstore.model.WidgetAppearanceConfig
@@ -62,6 +63,7 @@ import com.example.themeengine.LocalNothingPalette
 import com.example.themeengine.NothingTypographyEngine
 import java.util.Calendar
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -357,6 +359,7 @@ fun DigitalAuraFocusWidget(
     velocity: ScreenTimeVelocity,
     onToggleDeepFocus: () -> Unit,
     onOpenUsageAccess: () -> Unit,
+    onCycleAuraShape: () -> Unit = {},
     animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -430,64 +433,211 @@ fun DigitalAuraFocusWidget(
                     )
                 }
 
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .border(1.dp, palette.borderSubtle, RoundedCornerShape(999.dp))
+                        .clickable { onCycleAuraShape() }
+                        .padding(horizontal = 9.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = config.auraShape.displayName.uppercase(),
+                        fontFamily = NothingTypographyEngine.ntype82Family,
+                        fontSize = 9.sp,
+                        color = palette.accent
+                    )
+                }
+
                 if (!velocity.usagePermissionGranted) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
                             .border(1.dp, palette.borderSubtle, RoundedCornerShape(999.dp))
                             .clickable { onOpenUsageAccess() }
-                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                            .padding(horizontal = 8.dp, vertical = 7.dp)
                     ) {
                         Text(
                             text = "SYNC",
                             fontFamily = NothingTypographyEngine.ntype82Family,
-                            fontSize = 10.sp,
-                            color = palette.accent
+                            fontSize = 9.sp,
+                            color = palette.textSecondary
                         )
                     }
                 }
             }
         }
 
-        // Organic pulsating dot-waveform ring (reads pulsePhaseState strictly inside draw scope -> 0 recompositions)
-        Canvas(modifier = Modifier.size(96.dp)) {
+        // Multi-shape Digital Aura visualizer (8 selectable shapes, 0-recomposition draw scope)
+        Canvas(
+            modifier = Modifier
+                .size(96.dp)
+                .clickable { onCycleAuraShape() }
+        ) {
             val pulsePhase = pulsePhaseState?.value ?: 0f
             val c = Offset(size.width / 2f, size.height / 2f)
-            val baseR = size.minDimension * 0.34f
-            val dotCount = (14 + (config.dotDensity * 14).toInt()).coerceIn(12, 26)
-            val rings = 2
-            for (ring in 0 until rings) {
-                val ringScale = if (ring == 0) 1f else 0.68f
-                for (i in 0 until dotCount) {
-                    val theta = 2.0 * PI * i / dotCount
-                    val wave = sin(theta * 3.0 + pulsePhase + ring * 1.4).toFloat()
-                    val rOffset = wave * (4f + effectiveVelocity * 9f)
-                    val radius = baseR * ringScale + rOffset
-                    val px = c.x + radius * cos(theta).toFloat()
-                    val py = c.y + radius * sin(theta).toFloat()
-                    val dotColor = when {
-                        settings.deepFocusActive -> palette.textSecondary.copy(alpha = 0.65f)
-                        ring == 0 && wave > 0.3f -> palette.accent
-                        else -> palette.textPrimary.copy(alpha = 0.78f)
+            val baseR = size.minDimension * 0.38f
+            val dotCount = (16 + (config.dotDensity * 14).toInt()).coerceIn(14, 28)
+            val activeAccent = if (settings.deepFocusActive) palette.textSecondary else palette.accent
+            val primaryInk = palette.textPrimary.copy(alpha = 0.80f)
+
+            when (config.auraShape) {
+                DigitalAuraShape.ORGANIC_RING -> {
+                    for (ring in 0 until 2) {
+                        val ringScale = if (ring == 0) 1f else 0.66f
+                        for (i in 0 until dotCount) {
+                            val theta = 2.0 * PI * i / dotCount
+                            val wave = sin(theta * 3.0 + pulsePhase + ring * 1.4).toFloat()
+                            val radius = baseR * ringScale + wave * (3.5f + effectiveVelocity * 7f)
+                            drawCircle(
+                                color = if (ring == 0 && wave > 0.3f) activeAccent else primaryInk,
+                                radius = 2.1f + (wave + 1f) * 1.0f,
+                                center = Offset(c.x + radius * cos(theta).toFloat(), c.y + radius * sin(theta).toFloat())
+                            )
+                        }
                     }
-                    drawCircle(
-                        color = dotColor,
-                        radius = (2.1f + (wave + 1f) * 1.1f),
-                        center = Offset(px, py)
+                    drawCircle(color = activeAccent, radius = 4.8f + sin(pulsePhase) * 1.8f, center = c)
+                }
+
+                DigitalAuraShape.SACRED_HEXAGON -> {
+                    for (layer in 0 until 2) {
+                        val r = baseR * (if (layer == 0) 1.05f else 0.62f)
+                        val rot = pulsePhase * (if (layer == 0) 0.45f else -0.6f)
+                        for (side in 0 until 6) {
+                            val a1 = rot + side * (PI / 3.0)
+                            val a2 = rot + (side + 1) * (PI / 3.0)
+                            val p1 = Offset(c.x + r * cos(a1).toFloat(), c.y + r * sin(a1).toFloat())
+                            val p2 = Offset(c.x + r * cos(a2).toFloat(), c.y + r * sin(a2).toFloat())
+                            for (s in 0..3) {
+                                val t = s / 4f
+                                drawCircle(
+                                    color = if (s == 0 && layer == 0) activeAccent else primaryInk,
+                                    radius = if (s == 0) 3.4f else 2.2f,
+                                    center = Offset(p1.x + (p2.x - p1.x) * t, p1.y + (p2.y - p1.y) * t)
+                                )
+                            }
+                        }
+                    }
+                    drawCircle(color = activeAccent, radius = 4.5f, center = c)
+                }
+
+                DigitalAuraShape.PULSAR_STAR -> {
+                    val points = 12
+                    val total = points * 2
+                    for (i in 0 until total) {
+                        val angle = (PI * i / points) + pulsePhase * 0.35
+                        val isOuter = i % 2 == 0
+                        val breath = 1f + 0.16f * sin(pulsePhase + i).toFloat()
+                        val r = baseR * (if (isOuter) 1.12f * breath else 0.46f)
+                        drawCircle(
+                            color = if (isOuter) activeAccent else primaryInk,
+                            radius = if (isOuter) 3.4f else 2.2f,
+                            center = Offset(c.x + r * cos(angle).toFloat(), c.y + r * sin(angle).toFloat())
+                        )
+                    }
+                    drawCircle(color = primaryInk, radius = 4f, center = c)
+                }
+
+                DigitalAuraShape.VORTEX_SPIRAL -> {
+                    val spiralDots = 28
+                    for (i in 1..spiralDots) {
+                        val frac = i.toFloat() / spiralDots
+                        val angle = i * 0.72 + pulsePhase * 1.4
+                        val r = frac * baseR * 1.15f
+                        drawCircle(
+                            color = if (i % 4 == 0) activeAccent else primaryInk.copy(alpha = 0.35f + frac * 0.6f),
+                            radius = 1.6f + frac * 2.4f,
+                            center = Offset(c.x + r * cos(angle).toFloat(), c.y + r * sin(angle).toFloat())
+                        )
+                    }
+                }
+
+                DigitalAuraShape.INFINITY_LOOP -> {
+                    val steps = 28
+                    val rx = baseR * 1.15f
+                    val ry = baseR * 0.68f
+                    for (i in 0 until steps) {
+                        val t = (2.0 * PI * i / steps) + pulsePhase
+                        val x = c.x + rx * cos(t).toFloat()
+                        val y = c.y + ry * sin(2.0 * t).toFloat()
+                        val highlight = (i % 7 == 0)
+                        drawCircle(
+                            color = if (highlight) activeAccent else primaryInk,
+                            radius = if (highlight) 3.6f else 2.3f,
+                            center = Offset(x, y)
+                        )
+                    }
+                }
+
+                DigitalAuraShape.EQUALIZER_MATRIX -> {
+                    val bars = 7
+                    val maxDots = 7
+                    val stepX = (size.width * 0.82f) / bars
+                    val startX = size.width * 0.09f + stepX * 0.5f
+                    val stepY = (size.height * 0.76f) / maxDots
+                    for (b in 0 until bars) {
+                        val levelFrac = (0.3f + 0.7f * abs(sin(pulsePhase + b * 0.75))).toFloat()
+                        val litDots = (levelFrac * maxDots).roundToInt().coerceIn(1, maxDots)
+                        for (d in 0 until maxDots) {
+                            val y = size.height * 0.86f - d * stepY
+                            val lit = d < litDots
+                            drawCircle(
+                                color = when {
+                                    lit && d >= maxDots - 2 -> activeAccent
+                                    lit -> primaryInk
+                                    else -> palette.borderSubtle
+                                },
+                                radius = if (lit) 2.9f else 1.7f,
+                                center = Offset(startX + b * stepX, y)
+                            )
+                        }
+                    }
+                }
+
+                DigitalAuraShape.DIAMOND_CORE -> {
+                    for (ring in 1..3) {
+                        val span = baseR * (0.38f * ring) * (1f + 0.08f * sin(pulsePhase + ring).toFloat())
+                        val corners = listOf(
+                            Offset(c.x, c.y - span),
+                            Offset(c.x + span, c.y),
+                            Offset(c.x, c.y + span),
+                            Offset(c.x - span, c.y)
+                        )
+                        for (edge in 0 until 4) {
+                            val a = corners[edge]
+                            val b = corners[(edge + 1) % 4]
+                            for (s in 0..2) {
+                                val t = s / 3f
+                                drawCircle(
+                                    color = if (ring == 3 && s == 0) activeAccent else primaryInk,
+                                    radius = if (s == 0) 3.2f else 2.1f,
+                                    center = Offset(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+                                )
+                            }
+                        }
+                    }
+                    drawCircle(color = activeAccent, radius = 4.5f, center = c)
+                }
+
+                DigitalAuraShape.RADAR_SWEEP -> {
+                    drawCircle(color = palette.borderSubtle, radius = baseR * 1.05f, center = c, style = Stroke(1.4f))
+                    drawCircle(color = palette.borderSubtle, radius = baseR * 0.65f, center = c, style = Stroke(1.1f))
+                    for (i in 0 until 16) {
+                        val a = 2.0 * PI * i / 16.0
+                        drawCircle(
+                            color = primaryInk,
+                            radius = 2.1f,
+                            center = Offset(c.x + baseR * 1.05f * cos(a).toFloat(), c.y + baseR * 1.05f * sin(a).toFloat())
+                        )
+                    }
+                    val beamEnd = Offset(
+                        c.x + baseR * 1.05f * cos(pulsePhase.toDouble()).toFloat(),
+                        c.y + baseR * 1.05f * sin(pulsePhase.toDouble()).toFloat()
                     )
+                    drawLine(color = activeAccent, start = c, end = beamEnd, strokeWidth = 2.8f)
+                    drawCircle(color = activeAccent, radius = 4.2f, center = beamEnd)
+                    drawCircle(color = activeAccent, radius = 4.2f, center = c)
                 }
             }
-            drawCircle(
-                color = if (settings.deepFocusActive) palette.textSecondary else palette.accent,
-                radius = 5f + sin(pulsePhase) * 2f,
-                center = c
-            )
-            drawCircle(
-                color = palette.borderSubtle,
-                radius = baseR * 0.34f,
-                center = c,
-                style = Stroke(width = 1f)
-            )
         }
     }
 }
@@ -514,6 +664,10 @@ fun NothingCustomWidgetCard(
     mediaState: ActiveMediaState = ActiveMediaState(),
     hasBluetoothPermission: Boolean = true,
     onRequestBluetoothPermission: () -> Unit = {},
+    weatherRepo: WeatherRepository? = null,
+    onUpdateWidgetConfig: (CustomWidgetType, (WidgetAppearanceConfig) -> WidgetAppearanceConfig) -> Unit = { _, _ -> },
+    onSaveQuickNote: (String) -> Unit = {},
+    onOpenNewsSpace: () -> Unit = {},
     cardHeightDp: Int = 152,
     contentScale: Float = 1f,
     animationsPaused: Boolean = false,
@@ -563,7 +717,33 @@ fun NothingCustomWidgetCard(
                 config = wConfig,
                 settings = settings,
                 weatherState = weatherState,
-                onRefreshWeather = onRefreshWeather
+                onRefreshWeather = onRefreshWeather,
+                weatherRepo = weatherRepo,
+                onUpdateWeatherConfig = { tr -> onUpdateWidgetConfig(CustomWidgetType.WEATHER, tr) }
+            )
+            CustomWidgetType.NEWS_HEADLINES -> NewsPulseWidget(
+                config = wConfig,
+                settings = settings,
+                onOpenNewsSpace = onOpenNewsSpace
+            )
+            CustomWidgetType.QUICK_NOTES -> QuickNotesWidget(
+                config = wConfig,
+                settings = settings,
+                onSaveNote = onSaveQuickNote
+            )
+            CustomWidgetType.SYSTEM_MONITOR -> SystemMatrixWidget(
+                config = wConfig,
+                settings = settings,
+                telemetry = telemetry
+            )
+            CustomWidgetType.COUNTDOWN_DECK -> EventCountdownWidget(
+                config = wConfig,
+                settings = settings,
+                onUpdateCountdown = { title, days ->
+                    onUpdateWidgetConfig(CustomWidgetType.COUNTDOWN_DECK) {
+                        it.copy(countdownTitle = title, countdownDaysFromNow = days)
+                    }
+                }
             )
             CustomWidgetType.STEP_ANALYTICS -> StepAnalyticsWidget(
                 config = wConfig,
@@ -589,6 +769,11 @@ fun NothingCustomWidgetCard(
                 velocity = screenTimeVelocity,
                 onToggleDeepFocus = onToggleDeepFocus,
                 onOpenUsageAccess = onOpenUsageAccess,
+                onCycleAuraShape = {
+                    val shapes = DigitalAuraShape.entries
+                    val next = shapes[(shapes.indexOf(baseConfig.auraShape) + 1) % shapes.size]
+                    onUpdateWidgetConfig(CustomWidgetType.DIGITAL_AURA) { it.copy(auraShape = next) }
+                },
                 animationsPaused = animationsPaused
             )
             CustomWidgetType.MEDIA_VINYL -> MediaVinylWidget(

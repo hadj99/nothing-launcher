@@ -24,15 +24,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -41,6 +44,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Newspaper
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
@@ -55,6 +59,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +93,7 @@ import com.example.coreui.DotMatrixDivider
 import com.example.coreui.MaskedAppIcon
 import com.example.coreui.NothingSurfaceCard
 import com.example.customwidgets.DockMiniWidgetChip
+import com.example.customwidgets.WeatherRepository
 import com.example.customwidgets.WeatherState
 import com.example.settingsstore.db.StepHistoryEntity
 import com.example.settingsstore.model.CustomWidgetType
@@ -96,6 +102,7 @@ import com.example.settingsstore.model.FolderOpenMode
 import com.example.settingsstore.model.LauncherFolder
 import com.example.settingsstore.model.LauncherSettings
 import com.example.settingsstore.model.SearchBarPosition
+import com.example.settingsstore.model.WidgetAppearanceConfig
 import com.example.settingsstore.model.WidgetStackSlot
 import com.example.themeengine.LocalNothingPalette
 import com.example.themeengine.NothingLiveWallpaperCanvas
@@ -103,6 +110,10 @@ import com.example.themeengine.NothingTypographyEngine
 import com.example.widgethost.InteractiveWidgetStackCard
 import com.example.widgethost.LauncherWidgetHostManager
 import kotlinx.coroutines.launch
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.MediaStore
 import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -129,7 +140,6 @@ fun HomeScreenCanvas(
     onRequestBluetoothPermission: () -> Unit,
     onAppClick: (IndexedApp) -> Unit,
     onAppLongPress: (IndexedApp) -> Unit,
-    onOpenDrawer: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenSettings: (Int) -> Unit,
     onOpenAmbientAod: () -> Unit,
@@ -149,14 +159,39 @@ fun HomeScreenCanvas(
     onUpdateWidgetSlot: (String, (WidgetStackSlot) -> WidgetStackSlot) -> Unit = { _, _ -> },
     onAddWidgetSlot: (Int) -> Unit = {},
     onDeleteWidgetSlot: (String) -> Unit = {},
+    onRemovePage: (Int) -> Unit = {},
+    onAddWidgetToPage: (Int, CustomWidgetType) -> Unit = { _, _ -> },
+    onUpdateWidgetConfig: (CustomWidgetType, (WidgetAppearanceConfig) -> WidgetAppearanceConfig) -> Unit = { _, _ -> },
+    onSaveQuickNote: (String) -> Unit = {},
+    onOpenNewsSpace: () -> Unit = {},
+    weatherRepo: WeatherRepository? = null,
+    allAppsRequestTick: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val pageCount = settings.homeAppPages.size.coerceAtLeast(2)
+    val pageCount = settings.homeAppPages.size.coerceAtLeast(1)
     val homePagerState = rememberPagerState(pageCount = { pageCount })
+    val rootPagerState = rememberPagerState(pageCount = { 2 })
+    var showHomeMenu by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pageCount) {
+        if (homePagerState.currentPage > pageCount - 1) {
+            homePagerState.scrollToPage(pageCount - 1)
+        }
+    }
+
+    LaunchedEffect(allAppsRequestTick) {
+        if (allAppsRequestTick > 0) {
+            rootPagerState.animateScrollToPage(1)
+        }
+    }
+
+    BackHandler(enabled = rootPagerState.currentPage == 1) {
+        scope.launch { rootPagerState.animateScrollToPage(0) }
+    }
     val dockPageCount = settings.grid.dockPageCount.coerceIn(1, 3)
     val dockPagerState = rememberPagerState(pageCount = { dockPageCount })
 
@@ -198,7 +233,8 @@ fun HomeScreenCanvas(
                         if (editLayoutMode) editLayoutMode = false
                     },
                     onLongPress = {
-                        enterEditMode()
+                        NothingHaptics.performConfirm(context, settings.physics)
+                        showHomeMenu = true
                     },
                     onDoubleTap = {
                         NothingHaptics.performConfirm(context, settings.physics)
@@ -213,34 +249,27 @@ fun HomeScreenCanvas(
                     }
                 }
             }
-            .pointerInput(settings.gestures) {
-                var dragY = 0f
-                detectDragGestures(
-                    onDragStart = { dragY = 0f },
-                    onDrag = { _, dragAmount -> dragY += dragAmount.y },
-                    onDragEnd = {
-                        if (dragY < -110f) {
-                            NothingHaptics.performTick(context, settings.physics)
-                            onTriggerGesture(settings.gestures.swipeUp, cycleDock)
-                        } else if (dragY > 110f) {
-                            NothingHaptics.performTick(context, settings.physics)
-                            onTriggerGesture(settings.gestures.swipeDown, cycleDock)
-                        }
-                    }
-                )
-            }
     ) {
         // Live Wallpaper Layer (automatically paused when drawer/search/settings cover home)
         NothingLiveWallpaperCanvas(
             theme = settings.theme,
             deepFocusActive = settings.deepFocusActive,
-            paused = wallpaperPaused
+            paused = wallpaperPaused || rootPagerState.currentPage == 1
         )
 
+        VerticalPager(
+            state = rootPagerState,
+            modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 0
+        ) { rootPage ->
+        if (rootPage == 0) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
+                .then(
+                    if (settings.fullScreenHideStatusBar) Modifier.padding(top = 6.dp)
+                    else Modifier.statusBarsPadding()
+                )
                 .navigationBarsPadding()
         ) {
             // Top Status & Quick Action Bar
@@ -292,6 +321,14 @@ fun HomeScreenCanvas(
                             .testTag("home_aod_button")
                     ) {
                         Icon(Icons.Rounded.Bedtime, "Always-On Desk Clock", tint = palette.textPrimary)
+                    }
+                    IconButton(
+                        onClick = onOpenNewsSpace,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("home_news_button")
+                    ) {
+                        Icon(Icons.Rounded.Newspaper, "News Space", tint = palette.accent)
                     }
                     IconButton(
                         onClick = onOpenSearch,
@@ -546,7 +583,10 @@ fun HomeScreenCanvas(
                             .fillMaxWidth()
                             .combinedClickable(
                                 onClick = { if (editLayoutMode) editLayoutMode = false },
-                                onLongClick = { enterEditMode() }
+                                onLongClick = {
+                                    NothingHaptics.performConfirm(context, settings.physics)
+                                    showHomeMenu = true
+                                }
                             ),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -627,7 +667,11 @@ fun HomeScreenCanvas(
                                         mediaState = mediaState,
                                         hasBluetoothPermission = hasBluetoothPermission,
                                         onRequestBluetoothPermission = onRequestBluetoothPermission,
-                                        animationsPaused = wallpaperPaused || homePagerState.currentPage != pageIndex,
+                                        weatherRepo = weatherRepo,
+                                        onUpdateWidgetConfig = onUpdateWidgetConfig,
+                                        onSaveQuickNote = onSaveQuickNote,
+                                        onOpenNewsSpace = onOpenNewsSpace,
+                                        animationsPaused = wallpaperPaused || rootPagerState.currentPage != 0 || homePagerState.currentPage != pageIndex,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -669,81 +713,13 @@ fun HomeScreenCanvas(
                                 mediaState = mediaState,
                                 hasBluetoothPermission = hasBluetoothPermission,
                                 onRequestBluetoothPermission = onRequestBluetoothPermission,
-                                animationsPaused = wallpaperPaused || homePagerState.currentPage != pageIndex,
+                                weatherRepo = weatherRepo,
+                                onUpdateWidgetConfig = onUpdateWidgetConfig,
+                                onSaveQuickNote = onSaveQuickNote,
+                                onOpenNewsSpace = onOpenNewsSpace,
+                                animationsPaused = wallpaperPaused || rootPagerState.currentPage != 0 || homePagerState.currentPage != pageIndex,
                                 modifier = singleWidthMod
                             )
-                        }
-                    }
-
-                    // Dynamic Most Used Apps Section on Page 0
-                    if (pageIndex == 0 && settings.grid.showMostUsedSection) {
-                        val top8 = remember(mostUsedApps, allApps, settings.appCustomizations, contextHiddenPackages) {
-                            val source = if (mostUsedApps.isNotEmpty()) mostUsedApps else allApps
-                            source.filter {
-                                val c = settings.appCustomizations[it.packageName]
-                                c?.hidden != true && c?.lockedInVault != true && it.packageName !in contextHiddenPackages
-                            }.take(8)
-                        }
-                        if (top8.isNotEmpty()) {
-                            NothingSurfaceCard(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .combinedClickable(
-                                        onClick = {},
-                                        onLongClick = { enterEditMode() }
-                                    ),
-                                cornerRadius = 20.dp,
-                                backgroundColor = palette.surface.copy(alpha = 0.68f)
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "MOST USED APPS",
-                                            fontFamily = NothingTypographyEngine.ndot55Family,
-                                            fontSize = 11.sp,
-                                            letterSpacing = 1.2.sp,
-                                            color = palette.accent
-                                        )
-                                        Text(
-                                            text = "TOP ${top8.size}",
-                                            fontFamily = NothingTypographyEngine.ntype82Family,
-                                            fontSize = 10.sp,
-                                            color = palette.textSecondary
-                                        )
-                                    }
-                                    Spacer(Modifier.height(10.dp))
-                                    top8.chunked(cols).forEach { rowApps ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(settings.grid.horizontalPaddingDp.dp)
-                                        ) {
-                                            rowApps.forEach { app ->
-                                                HomeAppTile(
-                                                    app = app,
-                                                    settings = settings,
-                                                    appIndexer = appIndexer,
-                                                    iconVersion = iconVersion,
-                                                    badgeCount = badgeCounts[app.packageName] ?: 0,
-                                                    labelStyle = homeLabelStyle,
-                                                    onClick = { onAppClick(app) },
-                                                    onLongClick = { onAppLongPress(app) },
-                                                    onSwipeUp = {
-                                                        onTriggerGesture(settings.gestures.iconSwipeUp, cycleDock)
-                                                    },
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                            }
-                                            repeat((cols - rowApps.size).coerceAtLeast(0)) {
-                                                Spacer(Modifier.weight(1f))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
@@ -888,38 +864,13 @@ fun HomeScreenCanvas(
                                 }
                             }
                         }
-                    } else if (pageIndex > 0) {
-                        NothingSurfaceCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onOpenDrawer() },
-                            cornerRadius = 18.dp
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(18.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = "PAGE ${pageIndex + 1} READY",
-                                    fontFamily = NothingTypographyEngine.ndot55Family,
-                                    fontSize = 13.sp,
-                                    color = palette.accent
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = "Open App Drawer and long-press any app to pin it here.",
-                                    fontSize = 12.sp,
-                                    color = palette.textSecondary,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
                     }
 
-                    if (pageIndex == pageCount - 1) {
+                    if (editLayoutMode || pageIndex == pageCount - 1) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
                                 modifier = Modifier
@@ -932,6 +883,25 @@ fun HomeScreenCanvas(
                                 Icon(Icons.Rounded.Add, null, tint = palette.accent, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("ADD PAGE", fontFamily = NothingTypographyEngine.ntype82Family, fontSize = 10.sp, color = palette.textSecondary)
+                            }
+                            if (editLayoutMode && pageCount > 1) {
+                                Spacer(Modifier.width(8.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .border(1.dp, palette.accent.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
+                                        .clickable {
+                                            NothingHaptics.performConfirm(context, settings.physics)
+                                            onRemovePage(pageIndex)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                                        .testTag("remove_home_page_button"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Rounded.Remove, null, tint = palette.accent, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("REMOVE PAGE", fontFamily = NothingTypographyEngine.ntype82Family, fontSize = 10.sp, color = palette.accent)
+                                }
                             }
                         }
                     }
@@ -971,6 +941,26 @@ fun HomeScreenCanvas(
                 )
             }
 
+            // Swipe-up affordance for the TikTok-style All Apps feed
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 2.dp)
+                    .clickable { scope.launch { rootPagerState.animateScrollToPage(1) } },
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Rounded.Apps, null, tint = palette.textSecondary, modifier = Modifier.size(11.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    text = "SWIPE UP FOR ALL APPS",
+                    fontFamily = NothingTypographyEngine.ntype82Family,
+                    fontSize = 9.sp,
+                    letterSpacing = 1.1.sp,
+                    color = palette.textSecondary.copy(alpha = 0.8f)
+                )
+            }
+
             // Multi-Page Swipeable Bottom Dock (up to 3 pages x 7 slots)
             NothingSurfaceCard(
                 modifier = Modifier
@@ -995,8 +985,8 @@ fun HomeScreenCanvas(
                     ) { dPage ->
                         val dockSlots = settings.grid.dockSlotsPerPage.coerceIn(3, 7)
                         val dockPkgs = settings.dockPages.getOrNull(dPage).orEmpty()
-                        val fallbackApps = remember(allApps, dPage) {
-                            allApps.drop(dPage * dockSlots).take((dockSlots - 1).coerceAtLeast(2))
+                        val fallbackApps = remember(allApps) {
+                            resolveDefaultDockApps(context, allApps, mostUsedApps).take(dockSlots)
                         }
                         val appsInDock = if (dockPkgs.isNotEmpty()) {
                             dockPkgs.mapNotNull { appMap[it] }.take(dockSlots)
@@ -1071,18 +1061,6 @@ fun HomeScreenCanvas(
                                 )
                             }
 
-                            // Drawer trigger slot in dock
-                            Box(
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(CircleShape)
-                                    .background(palette.accent)
-                                    .clickable { onOpenDrawer() }
-                                    .testTag("open_app_drawer_button"),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Rounded.Apps, "All Apps", tint = Color.White, modifier = Modifier.size(22.dp))
-                            }
                         }
                     }
 
@@ -1104,6 +1082,70 @@ fun HomeScreenCanvas(
                     }
                 }
             }
+        }
+        } else {
+            AllAppsFeedPage(
+                settings = settings,
+                allApps = allApps,
+                mostUsedApps = mostUsedApps,
+                appIndexer = appIndexer,
+                iconVersion = iconVersion,
+                badgeCounts = badgeCounts,
+                contextHiddenPackages = contextHiddenPackages,
+                labelStyle = homeLabelStyle,
+                onAppClick = onAppClick,
+                onAppLongPress = onAppLongPress,
+                onOpenSearch = onOpenSearch,
+                onOpenNewsSpace = onOpenNewsSpace,
+                onBackToHome = { scope.launch { rootPagerState.animateScrollToPage(0) } }
+            )
+        }
+        }
+
+        // Home long-press popup: widget picker, page add/remove, customization shortcuts
+        if (showHomeMenu) {
+            HomeQuickMenuDialog(
+                settings = settings,
+                currentPage = homePagerState.currentPage,
+                pageCount = pageCount,
+                onAddWidget = { type ->
+                    onAddWidgetToPage(homePagerState.currentPage, type)
+                    showHomeMenu = false
+                },
+                onAddPage = {
+                    onAddPage()
+                    showHomeMenu = false
+                },
+                onRemovePage = {
+                    onRemovePage(homePagerState.currentPage)
+                    showHomeMenu = false
+                },
+                onEditLayout = {
+                    editLayoutMode = true
+                    showHomeMenu = false
+                },
+                onWallpaperTheme = {
+                    onOpenSettings(0)
+                    showHomeMenu = false
+                },
+                onLauncherSettings = {
+                    onOpenSettings(2)
+                    showHomeMenu = false
+                },
+                onAllApps = {
+                    showHomeMenu = false
+                    scope.launch { rootPagerState.animateScrollToPage(1) }
+                },
+                onNews = {
+                    showHomeMenu = false
+                    onOpenNewsSpace()
+                },
+                onOpenSearch = {
+                    showHomeMenu = false
+                    onOpenSearch()
+                },
+                onDismiss = { showHomeMenu = false }
+            )
         }
 
         // Folder Popup Card or Full-Screen Overlay
@@ -1274,14 +1316,16 @@ private fun HomeAppTile(
             badgeStyle = settings.badgeStyle,
             dimmedForFocus = settings.deepFocusActive
         )
-        Spacer(Modifier.height(settings.iconMask.labelOffsetDp.dp))
-        Text(
-            text = label,
-            style = labelStyle.copy(color = palette.textPrimary),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center
-        )
+        if (settings.showAppLabels) {
+            Spacer(Modifier.height(settings.iconMask.labelOffsetDp.dp))
+            Text(
+                text = label,
+                style = labelStyle.copy(color = palette.textPrimary),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -1423,5 +1467,409 @@ private fun FolderGridContent(
                 )
             }
         }
+    }
+}
+
+/**
+ * Resolves the default 5-slot dock (Phone, SMS, Camera, Chrome/Browser, Notes) by asking the
+ * system which app actually handles each intent, so the dock works on every device/OEM.
+ */
+private fun resolveDefaultDockApps(
+    context: Context,
+    apps: List<IndexedApp>,
+    mostUsed: List<IndexedApp>
+): List<IndexedApp> {
+    if (apps.isEmpty()) return emptyList()
+    val pm = context.packageManager
+
+    fun byIntent(intent: Intent): IndexedApp? {
+        return runCatching {
+            val resolved = pm.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            val pkg = resolved?.activityInfo?.packageName ?: return@runCatching null
+            apps.firstOrNull { it.packageName == pkg }
+        }.getOrNull()
+    }
+
+    fun byKeywords(vararg keys: String): IndexedApp? = apps.firstOrNull { app ->
+        keys.any { k ->
+            app.label.contains(k, ignoreCase = true) ||
+                app.packageName.contains(k, ignoreCase = true)
+        }
+    }
+
+    val phone = byIntent(Intent(Intent.ACTION_DIAL))
+        ?: byKeywords("phone", "dialer", "telephone")
+    val sms = byIntent(Intent(Intent.ACTION_VIEW, Uri.parse("smsto:")))
+        ?: byKeywords("messages", "sms", "messaging")
+    val camera = byIntent(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
+        ?: byKeywords("camera")
+    val browser = byIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")))
+        ?: byKeywords("chrome", "browser", "firefox", "web")
+    val notes = byKeywords("notes", "keep", "memo", "note")
+        ?: byIntent(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MESSAGING))
+
+    val picked = listOfNotNull(phone, sms, camera, browser, notes)
+        .distinctBy { it.packageName }
+
+    val filler = (mostUsed + mostUsed + apps)
+        .filter { candidate -> picked.none { it.packageName == candidate.packageName } }
+
+    return (picked + filler).take(5)
+}
+
+/**
+ * TikTok-style vertical "All Apps" surface: Most Used Apps on top, then the full app catalogue.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AllAppsFeedPage(
+    settings: LauncherSettings,
+    allApps: List<IndexedApp>,
+    mostUsedApps: List<IndexedApp>,
+    appIndexer: AppIndexerRepository,
+    iconVersion: Int,
+    badgeCounts: Map<String, Int>,
+    contextHiddenPackages: Set<String>,
+    labelStyle: androidx.compose.ui.text.TextStyle,
+    onAppClick: (IndexedApp) -> Unit,
+    onAppLongPress: (IndexedApp) -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenNewsSpace: () -> Unit,
+    onBackToHome: () -> Unit
+) {
+    val palette = LocalNothingPalette.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val visibleApps = remember(allApps, settings.appCustomizations, contextHiddenPackages) {
+        allApps.filter {
+            val c = settings.appCustomizations[it.packageName]
+            c?.hidden != true && c?.lockedInVault != true && it.packageName !in contextHiddenPackages
+        }.sortedBy { it.label.lowercase() }
+    }
+    val mostUsed = remember(mostUsedApps, visibleApps) {
+        val source = if (mostUsedApps.isNotEmpty()) mostUsedApps else visibleApps
+        source.filter { candidate -> visibleApps.any { it.packageName == candidate.packageName } }
+            .distinctBy { it.packageName }
+            .take(8)
+    }
+    val columns = settings.grid.drawerColumns.coerceIn(3, 6)
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns),
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (settings.fullScreenHideStatusBar) Modifier.padding(top = 10.dp)
+                else Modifier.statusBarsPadding()
+            )
+            .navigationBarsPadding()
+            .padding(horizontal = settings.grid.marginDp.dp)
+            .testTag("all_apps_feed"),
+        contentPadding = PaddingValues(top = 6.dp, bottom = 22.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(settings.grid.horizontalPaddingDp.dp)
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "ALL APPS",
+                        fontFamily = NothingTypographyEngine.ndot55Family,
+                        fontSize = 20.sp,
+                        color = palette.textPrimary
+                    )
+                    Text(
+                        text = "${visibleApps.size} APPS  •  ${mostUsed.size} FREQUENT",
+                        fontFamily = NothingTypographyEngine.ntype82Family,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.2.sp,
+                        color = palette.textSecondary
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onOpenNewsSpace, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Rounded.Newspaper, "News Space", tint = palette.accent)
+                    }
+                    IconButton(onClick = onOpenSearch, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Rounded.Search, "Search Everything", tint = palette.textPrimary)
+                    }
+                    IconButton(onClick = onBackToHome, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Rounded.Close, "Back to Home", tint = palette.textPrimary)
+                    }
+                }
+            }
+        }
+
+        if (settings.searchConfig.position != SearchBarPosition.DOCK_INTEGRATED) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                HomeInlineSearchPill(
+                    placeholder = settings.searchConfig.placeholderText,
+                    settings = settings,
+                    onClick = onOpenSearch,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+        }
+
+        if (mostUsed.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                NothingSurfaceCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    backgroundColor = palette.surface.copy(alpha = 0.78f)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "MOST USED APPS",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.2.sp,
+                            color = palette.accent
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        mostUsed.chunked(4).forEach { rowApps ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(settings.grid.horizontalPaddingDp.dp)
+                            ) {
+                                rowApps.forEach { app ->
+                                    HomeAppTile(
+                                        app = app,
+                                        settings = settings,
+                                        appIndexer = appIndexer,
+                                        iconVersion = iconVersion,
+                                        badgeCount = badgeCounts[app.packageName] ?: 0,
+                                        labelStyle = labelStyle,
+                                        onClick = { onAppClick(app) },
+                                        onLongClick = { onAppLongPress(app) },
+                                        onSwipeUp = {},
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                repeat((4 - rowApps.size).coerceAtLeast(0)) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(
+                text = "EVERY APP",
+                fontFamily = NothingTypographyEngine.ndot55Family,
+                fontSize = 11.sp,
+                letterSpacing = 1.2.sp,
+                color = palette.textSecondary,
+                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+            )
+        }
+
+        items(visibleApps.size) { index ->
+            val app = visibleApps[index]
+            HomeAppTile(
+                app = app,
+                settings = settings,
+                appIndexer = appIndexer,
+                iconVersion = iconVersion,
+                badgeCount = badgeCounts[app.packageName] ?: 0,
+                labelStyle = labelStyle,
+                onClick = { onAppClick(app) },
+                onLongClick = { onAppLongPress(app) },
+                onSwipeUp = {},
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+/**
+ * Long-press Home popup: pick any of the 15 widgets for the current page, manage pages and jump
+ * straight into the relevant Studio sections.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun HomeQuickMenuDialog(
+    settings: LauncherSettings,
+    currentPage: Int,
+    pageCount: Int,
+    onAddWidget: (CustomWidgetType) -> Unit,
+    onAddPage: () -> Unit,
+    onRemovePage: () -> Unit,
+    onEditLayout: () -> Unit,
+    onWallpaperTheme: () -> Unit,
+    onLauncherSettings: () -> Unit,
+    onAllApps: () -> Unit,
+    onNews: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val palette = LocalNothingPalette.current
+    Dialog(onDismissRequest = onDismiss) {
+        NothingSurfaceCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 26.dp,
+            backgroundColor = palette.background,
+            borderColor = palette.borderSubtle
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "HOME STUDIO",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 16.sp,
+                            color = palette.accent
+                        )
+                        Text(
+                            text = "PAGE ${currentPage + 1} OF $pageCount",
+                            fontFamily = NothingTypographyEngine.ntype82Family,
+                            fontSize = 10.sp,
+                            color = palette.textSecondary
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Rounded.Close, "Close Menu", tint = palette.textPrimary)
+                    }
+                }
+
+                DotMatrixDivider()
+
+                Text(
+                    text = "PICK A WIDGET FOR THIS PAGE",
+                    fontFamily = NothingTypographyEngine.ndot55Family,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.2.sp,
+                    color = palette.textSecondary
+                )
+                CustomWidgetType.entries.forEach { type ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(palette.surface)
+                            .border(1.dp, palette.borderSubtle, RoundedCornerShape(14.dp))
+                            .clickable { onAddWidget(type) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = type.displayName,
+                                fontFamily = NothingTypographyEngine.ntype82Family,
+                                fontSize = 13.sp,
+                                color = palette.textPrimary
+                            )
+                            Text(
+                                text = type.subtitle,
+                                fontSize = 10.5.sp,
+                                color = palette.textSecondary
+                            )
+                        }
+                        Icon(Icons.Rounded.Add, null, tint = palette.accent, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                DotMatrixDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HomeMenuAction(
+                        label = "ADD PAGE",
+                        accent = true,
+                        onClick = onAddPage,
+                        modifier = Modifier.weight(1f)
+                    )
+                    HomeMenuAction(
+                        label = "REMOVE PAGE",
+                        accent = false,
+                        enabled = pageCount > 1,
+                        onClick = onRemovePage,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HomeMenuAction(label = "ALL APPS", accent = true, onClick = onAllApps, modifier = Modifier.weight(1f))
+                    HomeMenuAction(label = "NEWS", accent = false, onClick = onNews, modifier = Modifier.weight(1f))
+                    HomeMenuAction(label = "SEARCH", accent = false, onClick = onOpenSearch, modifier = Modifier.weight(1f))
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HomeMenuAction(label = "EDIT LAYOUT", accent = false, onClick = onEditLayout, modifier = Modifier.weight(1f))
+                    HomeMenuAction(label = "WALLPAPER & HEX", accent = true, onClick = onWallpaperTheme, modifier = Modifier.weight(1f))
+                }
+
+                HomeMenuAction(
+                    label = "LAUNCHER SETTINGS",
+                    accent = false,
+                    onClick = onLauncherSettings,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeMenuAction(
+    label: String,
+    accent: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val palette = LocalNothingPalette.current
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (accent) palette.accent.copy(alpha = 0.18f) else palette.surface)
+            .border(
+                1.dp,
+                if (accent) palette.accent.copy(alpha = 0.7f) else palette.borderSubtle,
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(enabled = enabled) { onClick() }
+            .padding(vertical = 10.dp, horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            fontFamily = NothingTypographyEngine.ntype82Family,
+            fontSize = 10.5.sp,
+            color = when {
+                !enabled -> palette.textSecondary.copy(alpha = 0.4f)
+                accent -> palette.accent
+                else -> palette.textPrimary
+            },
+            textAlign = TextAlign.Center
+        )
     }
 }

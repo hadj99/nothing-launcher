@@ -86,23 +86,71 @@ fun NothingSectionHeader(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = title.uppercase(),
-            fontFamily = NothingTypographyEngine.ndot55Family,
-            fontSize = 13.sp,
-            letterSpacing = 1.6.sp,
-            color = palette.accent,
-            fontWeight = FontWeight.Bold
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(palette.surface)
+            .border(1.dp, palette.borderSubtle, RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(30.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(palette.accent)
         )
-        if (!subtitle.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = subtitle,
-                fontFamily = NothingTypographyEngine.bodyInterFamily,
-                fontSize = 12.sp,
-                color = palette.textSecondary
+                text = title.uppercase(),
+                fontFamily = NothingTypographyEngine.ndot55Family,
+                fontSize = 12.5.sp,
+                letterSpacing = 1.5.sp,
+                color = palette.textPrimary,
+                fontWeight = FontWeight.Bold
             )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontFamily = NothingTypographyEngine.bodyInterFamily,
+                    fontSize = 11.5.sp,
+                    color = palette.textSecondary
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Grouped settings card: a titled surface that visually clusters related controls so the
+ * Studio never looks like one long undifferentiated list of rows.
+ */
+@Composable
+fun NothingGroupCard(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    val palette = LocalNothingPalette.current
+    NothingSurfaceCard(
+        modifier = modifier.fillMaxWidth(),
+        cornerRadius = 22.dp,
+        backgroundColor = palette.surface.copy(alpha = 0.55f),
+        borderColor = palette.borderSubtle
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            NothingSectionHeader(title = title, subtitle = subtitle)
+            content()
         }
     }
 }

@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.settingsstore.db.LauncherDatabase
 import com.example.settingsstore.db.ThemePresetEntity
 import com.example.settingsstore.model.CustomWidgetType
+import com.example.settingsstore.model.GestureAction
 import com.example.settingsstore.model.LauncherSettings
 import com.example.settingsstore.model.SurfaceThemeConfig
 import com.example.settingsstore.model.WallpaperMode
@@ -67,8 +68,37 @@ class SettingsRepository(private val context: Context) {
         seedBuiltInPresets()
         val storedJson = context.launcherDataStore.data.map { it[keySettingsJson] }.first()
         if (!storedJson.isNullOrBlank()) {
-            runCatching { settingsAdapter.fromJson(storedJson) }.getOrNull()?.let {
-                _settings.value = it
+            runCatching { settingsAdapter.fromJson(storedJson) }.getOrNull()?.let { loaded ->
+                val needsV3Migration = !storedJson.contains("\"schemaVersion\":3")
+                val finalSettings = if (needsV3Migration) {
+                    loaded.copy(
+                        schemaVersion = 3,
+                        fullScreenHideStatusBar = true,
+                        grid = loaded.grid.copy(
+                            dockMiniChips = emptyList(),
+                            dockPageCount = 1,
+                            dockSlotsPerPage = 5
+                        ),
+                        gestures = loaded.gestures.copy(
+                            swipeUp = GestureAction.NONE,
+                            swipeDown = if (loaded.gestures.swipeDown == GestureAction.OPEN_SEARCH) {
+                                GestureAction.NONE
+                            } else {
+                                loaded.gestures.swipeDown
+                            },
+                            iconSwipeUp = if (loaded.gestures.iconSwipeUp == GestureAction.OPEN_SEARCH) {
+                                GestureAction.NONE
+                            } else {
+                                loaded.gestures.iconSwipeUp
+                            }
+                        )
+                    ).also { migrated ->
+                        persistSettings(migrated)
+                    }
+                } else {
+                    loaded
+                }
+                _settings.value = finalSettings
             }
         }
     }

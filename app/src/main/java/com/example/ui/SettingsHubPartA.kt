@@ -55,6 +55,7 @@ import com.example.appindexer.InstalledIconPack
 import com.example.appindexer.NothingGlyphCatalog
 import com.example.coreui.DotMatrixDivider
 import com.example.coreui.MaskedAppIcon
+import com.example.coreui.NothingGroupCard
 import com.example.coreui.NothingPillChip
 import com.example.coreui.NothingSectionHeader
 import com.example.coreui.NothingSliderRow
@@ -116,13 +117,13 @@ fun SettingsHubScreen(
     var activeTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 6)) }
 
     val tabTitles = listOf(
-        "Surface",
+        "Surface & Wallpaper",
         "Typography",
-        "Icon Mask & Grid",
-        "Search & Drawer",
-        "Physics & Gestures",
-        "Widgets & Context",
-        "Vault & QR"
+        "Icons & Grid",
+        "Search & Tools",
+        "Motion & Gestures",
+        "Widgets",
+        "System & Vault"
     )
 
     Column(
@@ -354,6 +355,30 @@ private fun SurfaceWallpaperTab(
 ) {
     val palette = LocalNothingPalette.current
     var newPresetName by remember { mutableStateOf("") }
+
+    NothingGroupCard(
+        title = "Home Screen Behavior",
+        subtitle = "Immersive mode & app label visibility"
+    ) {
+        NothingToggleRow(
+            label = "Immersive Full-Screen",
+            description = "Hide status bar icons (battery, Wi-Fi, notifications). Swipe from the top edge to peek.",
+            checked = settings.fullScreenHideStatusBar,
+            onCheckedChange = { checked ->
+                onUpdateSettings { it.copy(fullScreenHideStatusBar = checked) }
+            },
+            modifier = Modifier.testTag("toggle_fullscreen_status_bar")
+        )
+        NothingToggleRow(
+            label = "Show App Names",
+            description = "Turn off for a clean icon-only Home Screen and All Apps grid.",
+            checked = settings.showAppLabels,
+            onCheckedChange = { checked ->
+                onUpdateSettings { it.copy(showAppLabels = checked) }
+            },
+            modifier = Modifier.testTag("toggle_show_app_labels")
+        )
+    }
 
     NothingSectionHeader("Theme Presets", "Pre-loaded & unlimited custom saved presets")
     Row(
@@ -588,25 +613,56 @@ private fun SurfaceWallpaperTab(
     DotMatrixDivider()
     NothingSectionHeader("Surface Hex Colors", "Accent, glyph highlight, background & surface")
 
-    val accentSwatches = listOf("#D71921", "#FFFFFF", "#FF9E1B", "#00E676", "#38BDF8", "#A855F7")
-    Text("Glyph & Accent Highlight", fontSize = 12.sp, color = palette.textSecondary)
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        accentSwatches.forEach { hex ->
-            val selected = settings.theme.accentHex.equals(hex, ignoreCase = true)
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(parseHexColor(hex, Color.Red))
-                    .border(if (selected) 2.5.dp else 1.dp, Color.White, CircleShape)
-                    .clickable {
-                        onUpdateSettings {
-                            it.copy(theme = it.theme.copy(accentHex = hex, glyphHighlightHex = hex))
-                        }
-                    }
-            )
+    HexSwatchGrid(
+        label = "Glyph & Accent Highlight",
+        currentHex = settings.theme.accentHex,
+        onPick = { hex ->
+            onUpdateSettings {
+                it.copy(theme = it.theme.copy(accentHex = hex, glyphHighlightHex = hex))
+            }
         }
-    }
+    )
+
+    HexSwatchGrid(
+        label = "Surface Background",
+        currentHex = settings.theme.backgroundHex,
+        onPick = { hex ->
+            onUpdateSettings {
+                it.copy(
+                    theme = it.theme.copy(
+                        backgroundHex = hex,
+                        // A custom background must never be overridden by the OLED pure-black shortcut
+                        oledPureBlack = hex.equals("#000000", ignoreCase = true)
+                    )
+                )
+            }
+        }
+    )
+
+    HexSwatchGrid(
+        label = "Card & Widget Surface",
+        currentHex = settings.theme.surfaceHex,
+        onPick = { hex ->
+            onUpdateSettings {
+                it.copy(
+                    theme = it.theme.copy(
+                        surfaceHex = hex,
+                        widgetBgHex = hex,
+                        folderBgHex = hex,
+                        drawerBgHex = hex
+                    )
+                )
+            }
+        }
+    )
+
+    HexSwatchGrid(
+        label = "Primary Text",
+        currentHex = settings.theme.textPrimaryHex,
+        onPick = { hex ->
+            onUpdateSettings { it.copy(theme = it.theme.copy(textPrimaryHex = hex)) }
+        }
+    )
 
     var customAccentHex by remember(settings.theme.accentHex) { mutableStateOf(settings.theme.accentHex) }
     OutlinedTextField(
@@ -1158,4 +1214,48 @@ private fun IconMaskAndGridTab(
         onValueChange = { v -> onUpdateSettings { it.copy(grid = it.grid.copy(marginDp = v)) } },
         valueFormatter = { "${it.roundToInt()}dp" }
     )
+}
+
+/** 18-swatch hex palette picker used across every Surface colour slot. */
+@Composable
+private fun HexSwatchGrid(
+    label: String,
+    currentHex: String,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val palette = LocalNothingPalette.current
+    val swatches = listOf(
+        "#D71921", "#FF3B30", "#FF9E1B", "#FFD60A", "#C6FF00", "#00E676",
+        "#00C8A0", "#38BDF8", "#2E6BFF", "#7C4DFF", "#A855F7", "#FF2D95",
+        "#FFFFFF", "#E5E5EA", "#9A9AA2", "#5A5A62", "#1C1C20", "#000000"
+    )
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(label, fontSize = 12.sp, color = palette.textSecondary)
+        Spacer(Modifier.height(6.dp))
+        swatches.chunked(9).forEach { rowHexes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                rowHexes.forEach { hex ->
+                    val selected = currentHex.equals(hex, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(30.dp)
+                            .clip(CircleShape)
+                            .background(parseHexColor(hex, Color.Gray))
+                            .border(
+                                if (selected) 2.5.dp else 1.dp,
+                                if (selected) palette.accent else palette.borderSubtle,
+                                CircleShape
+                            )
+                            .clickable { onPick(hex) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+    }
 }

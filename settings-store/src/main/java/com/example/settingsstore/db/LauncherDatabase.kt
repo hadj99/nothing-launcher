@@ -177,6 +177,9 @@ interface SearchHistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun recordQuery(entry: SearchHistoryEntity)
 
+    @Query("DELETE FROM search_history WHERE queryText = :query")
+    suspend fun deleteQuery(query: String)
+
     @Query("DELETE FROM search_history")
     suspend fun clearHistory()
 }

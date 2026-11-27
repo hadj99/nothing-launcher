@@ -21,8 +21,10 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -253,6 +255,222 @@ fun NothingLiveWallpaperCanvas(
                     p.color = palette.accent.copy(alpha = (0.42f * brightness).coerceIn(0.1f, 0.9f)).toArgb()
                     p.strokeWidth = 6.4f * sizeScale
                     nc.drawPoints(accArr, 0, accIdx, p)
+                }
+            }
+
+            WallpaperMode.STARFIELD_WARP -> {
+                val cx = size.width * 0.5f + parallaxOffsetX * 0.8f
+                val cy = size.height * 0.44f + parallaxOffsetY * 0.8f
+                val maxR = size.maxDimension * 0.65f
+                val starCount = (48 + theme.wallpaperDotDensity * 48f).toInt().coerceIn(40, 96)
+                val progress = phase / (Math.PI * 2.0).toFloat()
+                val ink = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color.White
+
+                for (i in 0 until starCount) {
+                    val angle = (i * 2.399963f) // golden angle distribution
+                    val speedMul = 1f + (i % 3) * 0.5f
+                    val z = ((i * 0.173f + progress * speedMul) % 1f)
+                    val dist = z * z * maxR
+                    val tailDist = (dist - (10f + z * 28f * intensity) * sizeScale).coerceAtLeast(0f)
+                    val sx = cx + cos(angle) * dist
+                    val sy = cy + sin(angle) * dist
+                    val tx = cx + cos(angle) * tailDist
+                    val ty = cy + sin(angle) * tailDist
+                    val alpha = (z * 0.52f * brightness).coerceIn(0.03f, 0.85f)
+                    val isAccent = !deepFocusActive && accentFreq > 0.1f && (i % 11 == 0)
+                    val starColor = if (isAccent) palette.accent.copy(alpha = (alpha * 1.3f).coerceIn(0.1f, 0.95f)) else ink.copy(alpha = alpha)
+                    drawLine(
+                        color = starColor,
+                        start = Offset(tx, ty),
+                        end = Offset(sx, sy),
+                        strokeWidth = (1.2f + z * 2.4f) * sizeScale
+                    )
+                }
+            }
+
+            WallpaperMode.CYBER_HORIZON -> {
+                val horizonY = size.height * 0.48f + parallaxOffsetY * 0.5f
+                val vanishX = size.width * 0.5f + parallaxOffsetX * 0.9f
+                val ink = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color.White
+                val sunR = size.minDimension * 0.22f * sizeScale.coerceIn(0.6f, 1.4f)
+
+                // Pulsing horizon glyph sun
+                val sunPulse = if (animateActive) sin(phase) * 5f * intensity else 0f
+                drawCircle(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            palette.accent.copy(alpha = (0.36f * brightness).coerceIn(0.08f, 0.8f)),
+                            palette.accent.copy(alpha = 0.03f)
+                        ),
+                        startY = horizonY - sunR * 1.4f,
+                        endY = horizonY
+                    ),
+                    radius = sunR + sunPulse,
+                    center = Offset(vanishX, horizonY - sunR * 0.25f)
+                )
+                // Perspective radial rays
+                val rayCount = 13
+                for (i in -rayCount..rayCount) {
+                    val endX = vanishX + i * (size.width * 0.16f)
+                    drawLine(
+                        color = ink.copy(alpha = (0.11f * brightness).coerceIn(0.03f, 0.4f)),
+                        start = Offset(vanishX, horizonY),
+                        end = Offset(endX, size.height),
+                        strokeWidth = 1.2f * sizeScale
+                    )
+                }
+                // Scrolling perspective horizontal depth lines
+                val scroll = (phase / (Math.PI * 2.0).toFloat())
+                val bands = 11
+                for (b in 0 until bands) {
+                    val t = ((b + scroll) / bands).coerceIn(0.01f, 1f)
+                    val y = horizonY + (t * t) * (size.height - horizonY)
+                    val isAccent = !deepFocusActive && (b % 4 == 0)
+                    drawLine(
+                        color = if (isAccent) {
+                            palette.accent.copy(alpha = (t * 0.38f * brightness).coerceIn(0.05f, 0.75f))
+                        } else {
+                            ink.copy(alpha = (t * 0.18f * brightness).coerceIn(0.03f, 0.5f))
+                        },
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = (0.9f + t * 1.8f) * sizeScale
+                    )
+                }
+            }
+
+            WallpaperMode.AURORA_RIBBONS -> {
+                val ribbonCount = 5
+                val path = Path()
+                val ink = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color.White
+                for (r in 0 until ribbonCount) {
+                    path.reset()
+                    val baseY = size.height * (0.24f + r * 0.13f) + parallaxOffsetY * (0.4f + r * 0.15f)
+                    val segments = 18
+                    val dx = size.width / segments
+                    for (s in 0..segments) {
+                        val x = s * dx
+                        val wave = sin(s * 0.42f + phase * (if (r % 2 == 0) 1f else -1f) + r * 1.2f) *
+                            (28f + r * 9f) * intensity.coerceAtLeast(0.35f)
+                        val y = baseY + wave
+                        if (s == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    val isAccent = !deepFocusActive && (r == 1 || r == 3)
+                    drawPath(
+                        path = path,
+                        color = if (isAccent) {
+                            palette.accent.copy(alpha = (0.28f * brightness).coerceIn(0.06f, 0.75f))
+                        } else {
+                            ink.copy(alpha = (0.12f * brightness).coerceIn(0.03f, 0.45f))
+                        },
+                        style = Stroke(width = (3.5f + r * 1.6f) * sizeScale)
+                    )
+                }
+            }
+
+            WallpaperMode.ORBITAL_CONSTELLATION -> {
+                val nodeCount = 24
+                val ink = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color.White
+                val xs = FloatArray(nodeCount)
+                val ys = FloatArray(nodeCount)
+                for (i in 0 until nodeCount) {
+                    val baseX = ((i * 137) % 100) / 100f * size.width
+                    val baseY = ((i * 293 + 37) % 100) / 100f * size.height
+                    val driftX = sin(phase + i * 0.9f) * 26f * intensity.coerceAtLeast(0.25f)
+                    val driftY = cos(phase * 1.0f + i * 1.3f) * 26f * intensity.coerceAtLeast(0.25f)
+                    xs[i] = baseX + driftX + parallaxOffsetX * 0.6f
+                    ys[i] = baseY + driftY + parallaxOffsetY * 0.6f
+                }
+                val linkThresh = size.minDimension * 0.30f
+                val linkThreshSq = linkThresh * linkThresh
+                for (i in 0 until nodeCount) {
+                    for (j in i + 1 until nodeCount) {
+                        val dx = xs[i] - xs[j]
+                        val dy = ys[i] - ys[j]
+                        val distSq = dx * dx + dy * dy
+                        if (distSq < linkThreshSq) {
+                            val ratio = 1f - (distSq / linkThreshSq)
+                            drawLine(
+                                color = ink.copy(alpha = (ratio * 0.18f * brightness).coerceIn(0.02f, 0.45f)),
+                                start = Offset(xs[i], ys[i]),
+                                end = Offset(xs[j], ys[j]),
+                                strokeWidth = 1.1f * sizeScale
+                            )
+                        }
+                    }
+                    val isAccent = !deepFocusActive && (i % 5 == 0)
+                    drawCircle(
+                        color = if (isAccent) palette.accent.copy(alpha = (0.65f * brightness).coerceIn(0.15f, 0.95f))
+                        else ink.copy(alpha = (0.34f * brightness).coerceIn(0.08f, 0.8f)),
+                        radius = (if (isAccent) 3.8f else 2.4f) * sizeScale,
+                        center = Offset(xs[i], ys[i])
+                    )
+                }
+            }
+
+            WallpaperMode.PLASMA_RINGS -> {
+                val cx = size.width * 0.5f + parallaxOffsetX * 0.7f
+                val cy = size.height * 0.42f + parallaxOffsetY * 0.7f
+                val ink = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color.White
+                val degBase = Math.toDegrees(phase.toDouble()).toFloat()
+                val radiiFracs = floatArrayOf(0.14f, 0.23f, 0.32f, 0.41f, 0.50f)
+                radiiFracs.forEachIndexed { idx, frac ->
+                    val r = size.minDimension * frac
+                    val dir = if (idx % 2 == 0) 1f else -1f
+                    val start = degBase * dir + idx * 54f
+                    val isAccent = !deepFocusActive && (idx == 0 || idx == 2)
+                    val arcColor = if (isAccent) {
+                        palette.accent.copy(alpha = (0.42f * brightness).coerceIn(0.1f, 0.85f))
+                    } else {
+                        ink.copy(alpha = (0.18f * brightness).coerceIn(0.04f, 0.55f))
+                    }
+                    for (seg in 0 until 3) {
+                        drawArc(
+                            color = arcColor,
+                            startAngle = start + seg * 120f,
+                            sweepAngle = 68f,
+                            useCenter = false,
+                            topLeft = Offset(cx - r, cy - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = (if (isAccent) 3.8f else 2.0f) * sizeScale)
+                        )
+                    }
+                }
+            }
+
+            WallpaperMode.METEOR_RAIN -> {
+                val cols = (14 + theme.wallpaperDotDensity * 12f).toInt().coerceIn(12, 26)
+                val colW = size.width / cols
+                val dropStep = 28f
+                val ink = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color.White
+                val normPhase = phase / (Math.PI * 2.0).toFloat()
+
+                for (c in 0 until cols) {
+                    val x = (c + 0.5f) * colW + parallaxOffsetX * 0.35f
+                    val speedMul = 1 + (c % 2)
+                    val offsetFrac = ((c * 0.31f) + normPhase * speedMul) % 1f
+                    val headY = offsetFrac * (size.height + 220f) - 110f
+                    val isAccentCol = !deepFocusActive && (c % 5 == 2)
+                    val trailDots = 9
+                    for (t in 0 until trailDots) {
+                        val y = headY - t * dropStep
+                        if (y < -20f || y > size.height + 20f) continue
+                        val fade = (1f - t.toFloat() / trailDots)
+                        val color = if (t == 0 && isAccentCol) {
+                            palette.accent.copy(alpha = (0.78f * brightness).coerceIn(0.15f, 0.95f))
+                        } else if (t == 0) {
+                            ink.copy(alpha = (0.48f * brightness).coerceIn(0.1f, 0.85f))
+                        } else {
+                            (if (isAccentCol) palette.accent else ink).copy(
+                                alpha = (fade * 0.22f * brightness).coerceIn(0.02f, 0.55f)
+                            )
+                        }
+                        drawCircle(
+                            color = color,
+                            radius = (if (t == 0) 3.2f else 2.1f) * sizeScale,
+                            center = Offset(x, y)
+                        )
+                    }
                 }
             }
 

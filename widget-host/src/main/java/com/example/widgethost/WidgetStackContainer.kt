@@ -48,10 +48,12 @@ import com.example.contextautomation.ContextAutomationEngine
 import com.example.contextautomation.DeviceTelemetrySnapshot
 import com.example.coreui.NothingSurfaceCard
 import com.example.customwidgets.NothingCustomWidgetCard
+import com.example.customwidgets.WeatherRepository
 import com.example.customwidgets.WeatherState
 import com.example.settingsstore.db.StepHistoryEntity
 import com.example.settingsstore.model.CustomWidgetType
 import com.example.settingsstore.model.LauncherSettings
+import com.example.settingsstore.model.WidgetAppearanceConfig
 import com.example.settingsstore.model.WidgetStackSlot
 import com.example.themeengine.LocalNothingPalette
 import com.example.themeengine.NothingTypographyEngine
@@ -126,6 +128,10 @@ fun InteractiveWidgetStackCard(
     mediaState: ActiveMediaState = ActiveMediaState(),
     hasBluetoothPermission: Boolean = true,
     onRequestBluetoothPermission: () -> Unit = {},
+    weatherRepo: WeatherRepository? = null,
+    onUpdateWidgetConfig: (CustomWidgetType, (WidgetAppearanceConfig) -> WidgetAppearanceConfig) -> Unit = { _, _ -> },
+    onSaveQuickNote: (String) -> Unit = {},
+    onOpenNewsSpace: () -> Unit = {},
     animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -195,6 +201,7 @@ fun InteractiveWidgetStackCard(
             VerticalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
+                userScrollEnabled = entries.size > 1,
                 beyondViewportPageCount = 0
             ) { page ->
                 when (val entry = entries[page]) {
@@ -220,6 +227,10 @@ fun InteractiveWidgetStackCard(
                             mediaState = mediaState,
                             hasBluetoothPermission = hasBluetoothPermission,
                             onRequestBluetoothPermission = onRequestBluetoothPermission,
+                            weatherRepo = weatherRepo,
+                            onUpdateWidgetConfig = onUpdateWidgetConfig,
+                            onSaveQuickNote = onSaveQuickNote,
+                            onOpenNewsSpace = onOpenNewsSpace,
                             cardHeightDp = cardHeight,
                             contentScale = contentScale,
                             animationsPaused = animationsPaused || pagerState.currentPage != page
