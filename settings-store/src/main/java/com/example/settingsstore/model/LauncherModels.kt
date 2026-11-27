@@ -111,7 +111,14 @@ data class GridGeometryConfig(
     val showAppLabels: Boolean = true,
     val dockPageCount: Int = 1,
     val dockSlotsPerPage: Int = 5,
-    val dockMiniChips: List<DockMiniChipType> = emptyList()
+    val dockMiniChips: List<DockMiniChipType> = emptyList(),
+    // Dock ("bottom deck") tuning — size, shape, transparency and visibility
+    val dockVisible: Boolean = true,
+    val dockIconSizeDp: Float = 46f,
+    val dockCornerRadiusDp: Float = 24f,
+    val dockOpacity: Float = 0.86f,
+    val dockVerticalPaddingDp: Float = 8f,
+    val dockSpacingEven: Boolean = true
 )
 
 @Immutable
@@ -189,6 +196,8 @@ data class SearchConfig(
     val placeholderText: String = "SEARCH EVERYTHING...",
     val autoOpenKeyboard: Boolean = true,
     val incognitoMode: Boolean = false,
+    /** The row of quick tools that pops up right under the search field. Off by default — it was annoying. */
+    val showQuickTools: Boolean = false,
     val enabledSources: List<SearchSourceType> = SearchSourceType.entries.toList(),
     val sourcePriorityOrder: List<SearchSourceType> = SearchSourceType.entries.toList(),
     val customEngines: List<CustomSearchEngine> = listOf(
@@ -258,7 +267,7 @@ data class GestureConfig(
     val doubleTap: GestureAction = GestureAction.TOGGLE_DEEP_FOCUS,
     val pinchSpread: GestureAction = GestureAction.OPEN_SETTINGS,
     val iconSwipeUp: GestureAction = GestureAction.NONE,
-    val deviceShake: GestureAction = GestureAction.TOGGLE_FLASHLIGHT
+    val deviceShake: GestureAction = GestureAction.NONE
 )
 
 @Immutable
@@ -271,6 +280,7 @@ enum class BadgeStyle(val displayName: String) {
 
 @Immutable
 enum class WallpaperMode(val displayName: String) {
+    CUSTOM_PHOTO("My Photo"),
     DOT_MATRIX_GRID("Dot-Matrix Grid"),
     STARFIELD_WARP("Starfield Warp"),
     CYBER_HORIZON("Cyber Grid Horizon"),
@@ -292,7 +302,11 @@ enum class DigitalAuraShape(val displayName: String) {
     INFINITY_LOOP("Infinity Loop"),
     EQUALIZER_MATRIX("Pulse Equalizer"),
     DIAMOND_CORE("Diamond Core"),
-    RADAR_SWEEP("Glyph Radar")
+    RADAR_SWEEP("Glyph Radar"),
+    WIREFRAME_SPHERE("Wireframe Sphere"),
+    GALAXY_ORBIT("Galaxy Orbit"),
+    TWIN_HELIX("Twin Helix"),
+    SIGNAL_PULSE("Signal Pulse")
 }
 
 @Immutable
@@ -341,7 +355,11 @@ data class SurfaceThemeConfig(
     val wallpaperDotBrightness: Float = 1.0f,
     val wallpaperDotSizeScale: Float = 1.0f,
     val wallpaperParallaxStrength: Float = 1.0f,
-    val wallpaperAccentFrequency: Float = 1.0f
+    val wallpaperAccentFrequency: Float = 1.0f,
+    /** SAF uri of the user's own photo wallpaper (WallpaperMode.CUSTOM_PHOTO). */
+    val wallpaperImageUri: String? = null,
+    val wallpaperImageDim: Float = 0.35f,
+    val wallpaperImageBlur: Boolean = false
 )
 
 @Immutable
@@ -541,9 +559,22 @@ data class LauncherSettings(
     val gestures: GestureConfig = GestureConfig(),
     val badgeStyle: BadgeStyle = BadgeStyle.DOT_MATRIX_COUNT,
     val theme: SurfaceThemeConfig = SurfaceThemeConfig(),
-    val schemaVersion: Int = 4,
+    val schemaVersion: Int = 5,
     /** 0 = adaptive (max supported), otherwise a hard 30 / 60 / 120 FPS cap. */
     val frameRateCap: Int = 0,
+    /** Home icon label size (sp) — driven by the quick A-/A+ tools. */
+    val homeLabelSizeSp: Float = 11.5f,
+    /** Glow newly installed apps in the launcher accent colour. */
+    val glowNewApps: Boolean = true,
+    val newAppGlowDays: Int = 3,
+    /** Apps that can't be opened (and whose notifications are muted) while Deep Focus is on. */
+    val focusBlockedPackages: List<String> = emptyList(),
+    /** Always-On / sleep screen tuning. */
+    val aodShowSeconds: Boolean = true,
+    val aodDimLevel: Float = 1f,
+    val aodShowMedia: Boolean = true,
+    val aodGlyphs: Boolean = true,
+    val aodBurnInShift: Boolean = true,
     val fullScreenHideStatusBar: Boolean = true,
     val quickNoteText: String = "Tap to jot down quick ideas, tasks, or reminders...",
     val deepFocusActive: Boolean = false,

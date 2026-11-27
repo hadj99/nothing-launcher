@@ -637,6 +637,136 @@ fun DigitalAuraFocusWidget(
                     drawCircle(color = activeAccent, radius = 4.2f, center = beamEnd)
                     drawCircle(color = activeAccent, radius = 4.2f, center = c)
                 }
+
+                DigitalAuraShape.WIREFRAME_SPHERE -> {
+                    // Latitude / longitude dot sphere slowly rotating around its axis.
+                    val rings = 7
+                    val rot = pulsePhase * 0.5
+                    for (lat in 0 until rings) {
+                        val phi = PI * (lat + 1) / (rings + 1) - PI / 2.0
+                        val ringR = baseR * cos(phi).toFloat()
+                        val y = c.y + baseR * sin(phi).toFloat()
+                        if (ringR <= 0f) continue
+                        val dots = (14 * (ringR / baseR)).toInt().coerceAtLeast(4)
+                        for (d in 0 until dots) {
+                            val theta = 2.0 * PI * d / dots + rot
+                            val depth = sin(theta).toFloat() // -1 (back) .. 1 (front)
+                            drawCircle(
+                                color = if (depth > 0.55f && lat == rings / 2) activeAccent
+                                else primaryInk.copy(alpha = 0.35f + 0.55f * ((depth + 1f) / 2f)),
+                                radius = 1.5f + 1.1f * ((depth + 1f) / 2f),
+                                center = Offset(c.x + ringR * cos(theta).toFloat(), y)
+                            )
+                        }
+                    }
+                    val equatorDots = 26
+                    for (d in 0 until equatorDots) {
+                        val theta = 2.0 * PI * d / equatorDots + rot
+                        drawCircle(
+                            color = if (d % 9 == 0) activeAccent else palette.borderSubtle,
+                            radius = if (d % 9 == 0) 2.6f else 1.6f,
+                            center = Offset(c.x + baseR * cos(theta).toFloat(), c.y + baseR * sin(theta).toFloat())
+                        )
+                    }
+                }
+
+                DigitalAuraShape.GALAXY_ORBIT -> {
+                    // Three tilted elliptical orbits with trailing comet dots.
+                    val orbits = 3
+                    for (o in 0 until orbits) {
+                        val tilt = PI / 3.0 + o * PI / 7.0
+                        val radius = baseR * (0.72f + o * 0.14f)
+                        val speed = 1.0 + o * 0.45
+                        val dots = 22
+                        for (d in 0 until dots) {
+                            val theta = 2.0 * PI * d / dots
+                            val ex = radius * cos(theta)
+                            val ey = radius * 0.42f * sin(theta)
+                            val x = c.x + (ex * cos(tilt) - ey * sin(tilt)).toFloat()
+                            val y = c.y + (ex * sin(tilt) + ey * cos(tilt)).toFloat()
+                            drawCircle(
+                                color = primaryInk.copy(alpha = 0.18f + 0.22f * o),
+                                radius = 1.5f,
+                                center = Offset(x, y)
+                            )
+                        }
+                        val head = pulsePhase * speed
+                        repeat(4) { trail ->
+                            val t = head - trail * 0.16
+                            val ex = radius * cos(t)
+                            val ey = radius * 0.42f * sin(t)
+                            val x = c.x + (ex * cos(tilt) - ey * sin(tilt)).toFloat()
+                            val y = c.y + (ex * sin(tilt) + ey * cos(tilt)).toFloat()
+                            drawCircle(
+                                color = activeAccent.copy(alpha = 1f - trail * 0.22f),
+                                radius = if (trail == 0) 4.2f else 2.4f,
+                                center = Offset(x, y)
+                            )
+                        }
+                    }
+                    drawCircle(color = activeAccent, radius = 5f, center = c)
+                }
+
+                DigitalAuraShape.TWIN_HELIX -> {
+                    // Two counter-phased dot strands twisting vertically.
+                    val strands = 22
+                    val height = baseR * 1.7f
+                    for (i in 0 until strands) {
+                        val t = i / (strands - 1f)
+                        val y = c.y - height / 2f + height * t
+                        val phase = pulsePhase + t * PI * 3.0
+                        val spread = baseR * 0.62f * sin(t * PI).toFloat().coerceAtLeast(0.12f)
+                        val x1 = c.x + spread * cos(phase).toFloat()
+                        val x2 = c.x + spread * cos(phase + PI).toFloat()
+                        val front = cos(phase) > 0f
+                        drawCircle(
+                            color = if (front) activeAccent else primaryInk.copy(alpha = 0.45f),
+                            radius = if (front) 3.2f else 2.2f,
+                            center = Offset(x1, y)
+                        )
+                        drawCircle(
+                            color = if (!front) activeAccent else primaryInk.copy(alpha = 0.45f),
+                            radius = if (!front) 3.2f else 2.2f,
+                            center = Offset(x2, y)
+                        )
+                        if (i % 4 == 0) {
+                            drawLine(
+                                color = palette.borderSubtle.copy(alpha = 0.5f),
+                                start = Offset(x1, y),
+                                end = Offset(x2, y),
+                                strokeWidth = 1f
+                            )
+                        }
+                    }
+                }
+
+                DigitalAuraShape.SIGNAL_PULSE -> {
+                    // Equalizer-style concentric pulse rings radiating from the core.
+                    for (ring in 0 until 4) {
+                        val frac = ((pulsePhase / (2.0 * PI)) + ring * 0.25).toFloat() % 1f
+                        val r = baseR * (0.25f + 0.85f * frac)
+                        drawCircle(
+                            color = activeAccent.copy(alpha = (1f - frac) * 0.85f),
+                            radius = r,
+                            center = c,
+                            style = Stroke(width = 2.2f - frac * 1.2f)
+                        )
+                    }
+                    val bars = 28
+                    for (i in 0 until bars) {
+                        val a = 2.0 * PI * i / bars
+                        val amp = (sin(a * 5.0 + pulsePhase * 2.0).toFloat() + 1f) / 2f
+                        val inner = baseR * 0.55f
+                        val outer = inner + baseR * 0.30f * amp
+                        drawLine(
+                            color = if (amp > 0.72f) activeAccent else primaryInk.copy(alpha = 0.55f),
+                            start = Offset(c.x + inner * cos(a).toFloat(), c.y + inner * sin(a).toFloat()),
+                            end = Offset(c.x + outer * cos(a).toFloat(), c.y + outer * sin(a).toFloat()),
+                            strokeWidth = if (amp > 0.72f) 3f else 1.8f
+                        )
+                    }
+                    drawCircle(color = activeAccent, radius = 3.6f + sin(pulsePhase * 1.6).toFloat() * 1.4f, center = c)
+                }
             }
         }
     }

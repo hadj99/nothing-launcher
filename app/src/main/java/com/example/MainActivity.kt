@@ -58,7 +58,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.animationphysics.LauncherPhysicsEngine
-import com.example.animationphysics.ShakeGestureObserver
 import com.example.appindexer.IndexedApp
 import com.example.coreui.DotMatrixDivider
 import com.example.coreui.NothingPillChip
@@ -286,6 +285,14 @@ class MainActivity : ComponentActivity() {
             DotLauncherTheme(settings = settings) {
                 val palette = LocalNothingPalette.current
 
+                // Deep Focus: block-list apps are refused on launch and their notifications muted.
+                LaunchedEffect(settings.deepFocusActive, settings.focusBlockedPackages) {
+                    com.example.contextautomation.LiveNotificationBridge.setFocusFilter(
+                        active = settings.deepFocusActive,
+                        packages = settings.focusBlockedPackages
+                    )
+                }
+
                 // Pre-bake all installed app icons into flat masked GPU textures in background
                 LaunchedEffect(iconVersion, settings.iconMask, settings.deepFocusActive, palette.accent) {
                     prewarmMaskedIcons(
@@ -295,14 +302,6 @@ class MainActivity : ComponentActivity() {
                         accentColor = palette.accent
                     )
                 }
-
-                ShakeGestureObserver(
-                    enabled = isActivityResumed && !anyOverlayOpen &&
-                        settings.gestures.deviceShake != GestureAction.NONE,
-                    onShakeDetected = {
-                        viewModel.executeGestureAction(settings.gestures.deviceShake)
-                    }
-                )
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     HomeScreenCanvas(

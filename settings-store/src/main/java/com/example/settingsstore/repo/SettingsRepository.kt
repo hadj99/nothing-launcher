@@ -74,8 +74,8 @@ class SettingsRepository(private val context: Context) {
                     ?.groupValues?.getOrNull(1)
                     ?.toIntOrNull()
                     ?: 0
-                val finalSettings = if (storedVersion < 4) {
-                    var migrated = loaded.copy(schemaVersion = 4)
+                val finalSettings = if (storedVersion < 5) {
+                    var migrated = loaded.copy(schemaVersion = 5)
                     if (storedVersion < 3) {
                         // v1.3 defaults: clean 5-slot dock, no accidental search-on-swipe, immersive on.
                         migrated = migrated.copy(
@@ -98,6 +98,13 @@ class SettingsRepository(private val context: Context) {
                                     migrated.gestures.iconSwipeUp
                                 }
                             )
+                        )
+                    }
+                    if (storedVersion < 5) {
+                        // v1.6: the accelerometer "shake" gesture accidentally fired the flashlight
+                        // on the slightest movement — it is permanently disabled now.
+                        migrated = migrated.copy(
+                            gestures = migrated.gestures.copy(deviceShake = GestureAction.NONE)
                         )
                     }
                     persistSettings(migrated)

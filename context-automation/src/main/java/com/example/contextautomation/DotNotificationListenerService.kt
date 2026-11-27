@@ -48,6 +48,19 @@ object LiveNotificationBridge {
         runCatching { context.startActivity(intent) }
     }
 
+    // ---- Deep Focus notification muting ----------------------------------------------
+    @Volatile private var focusActive: Boolean = false
+    @Volatile private var focusMutedPackages: Set<String> = emptySet()
+
+    /** Called by the launcher whenever Deep Focus or its block-list changes. */
+    fun setFocusFilter(active: Boolean, packages: Collection<String>) {
+        focusActive = active
+        focusMutedPackages = packages.toSet()
+    }
+
+    fun shouldMute(packageName: String?): Boolean =
+        focusActive && packageName != null && packageName in focusMutedPackages
+
     internal fun updateNotifications(notifications: Array<StatusBarNotification>?) {
         val counts = HashMap<String, Int>()
         notifications?.forEach { sbn ->
@@ -106,6 +119,11 @@ object LiveNotificationBridge {
 class DotNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
+        runCatching {
+            activeNotifications?.forEach { sbn ->
+                if (LiveNotificationBridge.shouldMute(sbn.packageName)) cancelNotification(sbn.key)
+            }
+        }
         LiveNotificationBridge.updateNotifications(runCatching { activeNotifications }.getOrNull())
         LiveNotificationBridge.updateMediaFromManager(
             this,
@@ -115,6 +133,11 @@ class DotNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
+        // Deep Focus: swallow notifications from blocked apps entirely.
+        if (sbn != null && LiveNotificationBridge.shouldMute(sbn.packageName)) {
+            runCatching { cancelNotification(sbn.key) }
+            return
+        }
         LiveNotificationBridge.updateNotifications(runCatching { activeNotifications }.getOrNull())
         LiveNotificationBridge.updateMediaFromManager(
             this,

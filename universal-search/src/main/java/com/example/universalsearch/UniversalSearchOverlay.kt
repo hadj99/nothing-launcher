@@ -275,15 +275,17 @@ fun UniversalSearchOverlay(
             Spacer(Modifier.height(8.dp))
         }
 
-        // Quick Tools Deck above search results & history
-        SearchQuickToolsDeck(
-            query = query,
-            onSetQuery = onQueryChange,
-            onFireTimerSeconds = { secs -> searchEngine.fireTimer(UtilityResult.QuickTimer("${secs / 60}m", secs)) },
-            onToggleTorch = onToggleTorch,
-            onOpenSettings = { onOpenLauncherSettingsTab(0) }
-        )
-        Spacer(Modifier.height(8.dp))
+        // Quick Tools Deck — hidden by default; it used to pop up right under the search field.
+        if (settings.searchConfig.showQuickTools) {
+            SearchQuickToolsDeck(
+                query = query,
+                onSetQuery = onQueryChange,
+                onFireTimerSeconds = { secs -> searchEngine.fireTimer(UtilityResult.QuickTimer("${secs / 60}m", secs)) },
+                onToggleTorch = onToggleTorch,
+                onOpenSettings = { onOpenLauncherSettingsTab(0) }
+            )
+            Spacer(Modifier.height(8.dp))
+        }
 
         // Web & In-App Search Pills
         if (query.isNotBlank() && searchState.webEngines.isNotEmpty()) {
@@ -355,38 +357,6 @@ fun UniversalSearchOverlay(
                     }
                 }
 
-                // Helpful tips & zero-permission / scoped actions
-                item {
-                    NothingSurfaceCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "SEARCH EVERYTHING",
-                                fontFamily = NothingTypographyEngine.ndot55Family,
-                                fontSize = 12.sp,
-                                color = palette.accent
-                            )
-                            Text(
-                                text = "Try math (245 * 18), FX/units (100 USD to DZD, 5 km to miles), timers (timer 10m), hex (#D71921), apps, contacts, settings, or files.",
-                                fontSize = 12.sp,
-                                color = palette.textSecondary
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (!searchState.contactsPermissionGranted && !contactsRequested) {
-                                    NothingPillChip(
-                                        label = "Enable Contacts",
-                                        selected = false,
-                                        onClick = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) }
-                                    )
-                                }
-                                NothingPillChip(
-                                    label = "Index Folder (SAF)",
-                                    selected = false,
-                                    onClick = { safFolderLauncher.launch(null) }
-                                )
-                            }
-                        }
-                    }
-                }
             } else {
                 // Respect user-defined priority order for results
                 settings.searchConfig.sourcePriorityOrder.forEach { source ->

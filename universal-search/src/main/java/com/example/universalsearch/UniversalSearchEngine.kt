@@ -384,24 +384,60 @@ class UniversalSearchEngine(private val context: Context) {
 
     private fun querySettingsCatalog(query: String): List<SettingsJumpResult> {
         val catalog = listOf(
+            // ---- System settings (every common Android settings screen) ----
+            SettingsJumpResult("sys_settings", "System Settings", "Open Android settings home", Settings.ACTION_SETTINGS),
             SettingsJumpResult("wifi", "Wi-Fi Settings", "System network & internet", Settings.ACTION_WIFI_SETTINGS),
             SettingsJumpResult("bt", "Bluetooth Settings", "System connected devices", Settings.ACTION_BLUETOOTH_SETTINGS),
-            SettingsJumpResult("display", "Display & Brightness", "System screen & dark theme", Settings.ACTION_DISPLAY_SETTINGS),
-            SettingsJumpResult("battery", "Battery & Saver", "System power management", Settings.ACTION_BATTERY_SAVER_SETTINGS),
-            SettingsJumpResult("sound", "Sound & Vibration", "System volume & DND", Settings.ACTION_SOUND_SETTINGS),
+            SettingsJumpResult("network_ops", "Network & Internet", "Mobile data, SIM, hotspot", Settings.ACTION_WIRELESS_SETTINGS),
+            SettingsJumpResult("data_usage", "Data Usage", "Mobile data usage & limits", Settings.ACTION_DATA_USAGE_SETTINGS),
+            SettingsJumpResult("airplane", "Airplane Mode", "Wireless & network toggles", Settings.ACTION_AIRPLANE_MODE_SETTINGS),
+            SettingsJumpResult("nfc", "NFC & Contactless", "Tap-to-pay and NFC tags", Settings.ACTION_NFC_SETTINGS),
+            SettingsJumpResult("display", "Display & Brightness", "Screen, dark theme, refresh rate", Settings.ACTION_DISPLAY_SETTINGS),
+            SettingsJumpResult("battery", "Battery & Saver", "Power management & saver", Settings.ACTION_BATTERY_SAVER_SETTINGS),
+            SettingsJumpResult("sound", "Sound & Vibration", "Volume, ringtone & DND", Settings.ACTION_SOUND_SETTINGS),
+            SettingsJumpResult("dnd", "Do Not Disturb", "Notification interruption rules", Settings.ACTION_ZEN_MODE_ACCESS_SETTINGS),
+            SettingsJumpResult("notifications", "Notification Settings", "App notifications & channels", Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
             SettingsJumpResult("apps", "System Apps", "Manage installed applications", Settings.ACTION_APPLICATION_SETTINGS),
-            SettingsJumpResult("l_mask", "Icon Masking & Polygons", "Launcher: Star, Diamond, Hexagon, Polygon, Rim Glow", launcherTabIndex = 2),
-            SettingsJumpResult("l_typo", "Typography Engine", "Launcher: NDOT fonts, kerning & case", launcherTabIndex = 1),
-            SettingsJumpResult("l_theme", "Surface & Wallpaper", "Launcher: OLED black, blur, presets", launcherTabIndex = 0),
-            SettingsJumpResult("l_search", "Search Bar Config", "Launcher: Position, sources & engines", launcherTabIndex = 3),
-            SettingsJumpResult("l_physics", "Physics & Gestures", "Launcher: Spring bounce & swipes", launcherTabIndex = 4),
-            SettingsJumpResult("l_widgets", "Widgets & Context Rules", "Launcher: 11 Nothing widgets & auto-profiles", launcherTabIndex = 5),
+            SettingsJumpResult("locale", "Language & Region", "System language, region", Settings.ACTION_LOCALE_SETTINGS),
+            SettingsJumpResult("input", "Keyboard & Input", "Keyboards, spell-check", Settings.ACTION_INPUT_METHOD_SETTINGS),
+            SettingsJumpResult("date", "Date & Time", "Clock format and time zone", Settings.ACTION_DATE_SETTINGS),
+            SettingsJumpResult("accessibility", "Accessibility", "TalkBack, captions, magnification", Settings.ACTION_ACCESSIBILITY_SETTINGS),
+            SettingsJumpResult("privacy", "Privacy Dashboard", "Permissions & privacy", Settings.ACTION_PRIVACY_SETTINGS),
+            SettingsJumpResult("security", "Security", "Screen lock & encryption", Settings.ACTION_SECURITY_SETTINGS),
+            SettingsJumpResult("location", "Location", "GPS & location access", Settings.ACTION_LOCATION_SOURCE_SETTINGS),
+            SettingsJumpResult("storage", "Storage", "Free space & cached data", Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
+            SettingsJumpResult("memory", "Memory", "RAM usage by apps", Settings.ACTION_MEMORY_CARD_SETTINGS),
+            SettingsJumpResult("dev", "Developer Options", "USB debugging, animation scale", Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+            SettingsJumpResult("about", "About Phone", "Build number & updates", Settings.ACTION_DEVICE_INFO_SETTINGS),
+            SettingsJumpResult("home", "Home App", "Choose the default launcher", Settings.ACTION_HOME_SETTINGS),
+            SettingsJumpResult("managed", "Default Apps", "Default browser, phone, SMS", Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+            SettingsJumpResult("tts", "Text-to-Speech", "Speech engine & voice", Settings.ACTION_VOICE_INPUT_SETTINGS),
+            SettingsJumpResult("battery_opt", "Battery Optimization", "Unrestricted background apps", Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+            SettingsJumpResult("vpn", "VPN", "VPN connections", Settings.ACTION_VPN_SETTINGS),
+            SettingsJumpResult("print", "Printing", "Print services", Settings.ACTION_PRINT_SETTINGS),
+            SettingsJumpResult("captive", "Captive Portal", "Public Wi-Fi sign-in", Settings.ACTION_CAPTIVE_PORTAL_SETTINGS),
+            SettingsJumpResult("dream", "Screen Saver / Dock", "Daydream and dock settings", Settings.ACTION_DREAM_SETTINGS),
+            SettingsJumpResult("vr", "VR Helpers", "Virtual reality services", Settings.ACTION_VR_LISTENER_SETTINGS),
+            SettingsJumpResult("hdcp", "HDCP Checking", "HDMI content protection", Settings.ACTION_HDCP_CHECKING_SETTINGS),
+            SettingsJumpResult("sync", "Accounts & Sync", "Google & work accounts", Settings.ACTION_SYNC_SETTINGS),
+            SettingsJumpResult("userdict", "Personal Dictionary", "Custom words for keyboards", Settings.ACTION_USER_DICTIONARY_SETTINGS),
+            SettingsJumpResult("speech", "Speech Input", "Voice typing services", Settings.ACTION_VOICE_CONTROL_DO_NOT_DISTURB_MODE),
+            SettingsJumpResult("touch", "Touch & Gestures", "Gesture navigation hints", Settings.ACTION_SETTINGS),
+            SettingsJumpResult("biometric", "Face & Fingerprint", "Biometric unlock", Settings.ACTION_BIOMETRIC_ENROLL),
+            SettingsJumpResult("gaming", "Game Dashboard", "Gaming mode & overlays", Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+            // ---- Launcher settings sections ----
+            SettingsJumpResult("l_theme", "Surface & Wallpaper", "Launcher: OLED black, wallpaper, presets", launcherTabIndex = 0),
+            SettingsJumpResult("l_typo", "Typography Engine", "Launcher: NDOT fonts, kerning & size", launcherTabIndex = 1),
+            SettingsJumpResult("l_mask", "Icon Masking & Polygons", "Launcher: Star, Diamond, Hexagon, Rim Glow", launcherTabIndex = 2),
+            SettingsJumpResult("l_search", "Search Bar Config", "Launcher: sources, engines, quick tools", launcherTabIndex = 3),
+            SettingsJumpResult("l_physics", "Physics & Gestures", "Launcher: FPS cap, spring bounce, swipes", launcherTabIndex = 4),
+            SettingsJumpResult("l_widgets", "Widgets & Context Rules", "Launcher: 15 Nothing widgets & profiles", launcherTabIndex = 5),
             SettingsJumpResult("l_backup", "Backup & QR Clone", "Launcher: Export/Import JSON & QR", launcherTabIndex = 6)
         )
         return catalog.filter {
             it.title.contains(query, ignoreCase = true) ||
                 it.subtitle.contains(query, ignoreCase = true)
-        }.take(5)
+        }.take(6)
     }
 
     fun executeWebSearch(engine: CustomSearchEngine, query: String) {

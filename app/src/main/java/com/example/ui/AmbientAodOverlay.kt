@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
@@ -88,7 +89,7 @@ fun AmbientAodOverlay(
         while (true) {
             timeMillis = System.currentTimeMillis()
             delay(1000L)
-            if ((timeMillis / 1000L) % 20L == 0L) {
+            if (settings.aodBurnInShift && (timeMillis / 1000L) % 20L == 0L) {
                 burnInStep = (burnInStep + 1) % 6
             }
         }
@@ -145,6 +146,7 @@ fun AmbientAodOverlay(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            .graphicsLayer { alpha = settings.aodDimLevel.coerceIn(0.35f, 1f) }
             .clickable { onDismiss() }
             .statusBarsPadding()
             .navigationBarsPadding()
@@ -251,13 +253,15 @@ fun AmbientAodOverlay(
                         fontSize = 46.sp,
                         color = Color.White
                     )
-                    Text(
-                        text = "$secondsStr SEC",
-                        fontFamily = NothingTypographyEngine.ntype82Family,
-                        fontSize = 11.sp,
-                        letterSpacing = 2.sp,
-                        color = palette.accent
-                    )
+                    if (settings.aodShowSeconds) {
+                        Text(
+                            text = "$secondsStr SEC",
+                            fontFamily = NothingTypographyEngine.ntype82Family,
+                            fontSize = 11.sp,
+                            letterSpacing = 2.sp,
+                            color = palette.accent
+                        )
+                    }
                 }
             }
 
@@ -270,6 +274,7 @@ fun AmbientAodOverlay(
             )
 
             // Animated dot-matrix glyph equalizer (pure draw scope — no recompositions)
+            if (settings.aodGlyphs) {
             Canvas(
                 modifier = Modifier
                     .width(132.dp)
@@ -297,6 +302,7 @@ fun AmbientAodOverlay(
                         )
                     }
                 }
+            }
             }
 
             // Status pills row (Battery + Unread Alerts)
@@ -344,7 +350,7 @@ fun AmbientAodOverlay(
             }
 
             // Active Media AOD Bar
-            if (mediaState.hasSession) {
+            if (mediaState.hasSession && settings.aodShowMedia) {
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))

@@ -49,10 +49,55 @@ import java.util.concurrent.ConcurrentHashMap
 
 @Stable
 class AppIndexerRepository(private val context: Context) {
+    private companion object {
+        const val SEEDED_KEY = "__seeded"
+    }
+
     private val pm = context.packageManager
     private val database = LauncherDatabase.getInstance(context)
     private val appIndexDao = database.appIndexDao()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // First-seen registry so freshly installed apps can glow in the launcher accent colour.
+    private val firstSeenPrefs by lazy {
+        context.getSharedPreferences("dotos_first_seen", Context.MODE_PRIVATE)
+    }
+
+    /** Records the first time we ever saw each package; returns the full map. */
+    private fun syncFirstSeen(packages: Collection<String>): Map<String, Long> {
+        synchronized(firstSeenPrefs) {
+            val now = System.currentTimeMillis()
+            // First ever scan: back-date everything so no existing app glows as "new".
+            val seeded = firstSeenPrefs.getBoolean(SEEDED_KEY, false)
+            val stamp = if (seeded) now else now - 10L * 24L * 60L * 60L * 1000L
+            val editor = firstSeenPrefs.edit()
+            var changed = false
+            packages.forEach { pkg ->
+                if (!firstSeenPrefs.contains(pkg)) {
+                    editor.putLong(pkg, stamp)
+                    changed = true
+                }
+            }
+            if (!seeded) {
+                editor.putBoolean(SEEDED_KEY, true)
+                changed = true
+            }
+            if (changed) editor.apply()
+            return packages.associateWith { firstSeenPrefs.getLong(it, now) }
+        }
+    }
+
+    /** Packages first seen inside [days] days (only used when the accent-glow setting is on). */
+    fun newlyInstalledPackages(days: Int): Set<String> {
+        val cutoff = System.currentTimeMillis() - days.coerceIn(1, 30) * 24L * 60L * 60L * 1000L
+        return synchronized(firstSeenPrefs) {
+            firstSeenPrefs.all.entries
+                .filter { (key, _) -> !key.startsWith("__") }
+                .filter { (_, seen) -> (seen as? Long ?: 0L) >= cutoff }
+                .map { it.key }
+                .toSet()
+        }
+    }
 
     // Lock-free in-memory bitmap cache — never evicts normal app counts, zero main-thread jank.
     private val iconCache = ConcurrentHashMap<String, ImageBitmap>(256)
@@ -179,6 +224,10 @@ class AppIndexerRepository(private val context: Context) {
                         isSystemApp = isSys
                     )
                 )
+            }
+
+            if (activePkgs.isNotEmpty()) {
+                syncFirstSeen(activePkgs)
             }
 
             if (entities.isNotEmpty()) {

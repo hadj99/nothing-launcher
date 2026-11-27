@@ -487,6 +487,12 @@ private val studioSearchIndex = listOf(
     StudioSettingEntry("Biometric App Vault", "PIN & fingerprint protected hidden apps", 6, listOf("vault", "hidden", "pin", "biometric")),
     StudioSettingEntry("Backup & Restore", "Export or import the full launcher configuration", 6, listOf("backup", "restore", "export", "import")),
     StudioSettingEntry("QR Share", "Share your setup as a QR payload", 6, listOf("qr", "share")),
+    StudioSettingEntry("My Wallpaper & Colours", "Pick a photo wallpaper and extract colours from it", 0, listOf("wallpaper", "photo", "colors", "colours", "extract")),
+    StudioSettingEntry("Bottom Deck (Dock)", "Dock icon size, radius, transparency, slots & pages", 2, listOf("dock", "bottom deck", "deck")),
+    StudioSettingEntry("Sleep Screen", "Always-on clock seconds, brightness, glyphs, media", 4, listOf("sleep", "aod", "always on", "clock")),
+    StudioSettingEntry("Deep Focus Block-List", "Apps blocked and muted while Deep Focus is on", 5, listOf("focus", "block", "mute")),
+    StudioSettingEntry("Home Icon Label Size", "A- / A+ quick label size for Home icons", 1, listOf("label", "font size", "names", "small")),
+    StudioSettingEntry("Search Quick Tools Toggle", "Hide the pop-up tools under the search bar", 3, listOf("search popup", "quick tools")),
     StudioSettingEntry("Quick Tools Cluster", "One icon hides or reveals Edit, Sleep, News, Search, All Apps, Font & Names", 0, listOf("tools", "fab", "top bar", "cluster")),
     StudioSettingEntry("At a Glance Header", "Rotating calendar, weather, steps & battery glance card", 0, listOf("glance", "calendar", "at a glance")),
     StudioSettingEntry("Frame Rate Cap", "Adaptive or a hard 30 / 60 / 120 FPS ceiling", 4, listOf("fps", "frame rate", "hz", "refresh", "performance")),
@@ -641,7 +647,137 @@ private fun SurfaceWallpaperTab(
     onDeletePreset: (String) -> Unit
 ) {
     val palette = LocalNothingPalette.current
+    val context = LocalContext.current
     var newPresetName by remember { mutableStateOf("") }
+    var paletteStatus by remember { mutableStateOf<String?>(null) }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            onUpdateSettings { cfg ->
+                cfg.copy(
+                    theme = cfg.theme.copy(
+                        wallpaperMode = com.example.settingsstore.model.WallpaperMode.CUSTOM_PHOTO,
+                        wallpaperImageUri = uri.toString()
+                    )
+                )
+            }
+            paletteStatus = "Wallpaper set"
+        }
+    }
+
+    NothingGroupCard(
+        title = "My Wallpaper & Launcher Colours",
+        subtitle = "Pick any photo, then pull the launcher accent/surface straight out of it"
+    ) {
+        if (settings.theme.wallpaperImageUri == null) {
+            Text(
+                text = "No photo wallpaper yet — the generative wallpapers are still doing the job.",
+                fontSize = 11.5.sp,
+                color = palette.textSecondary
+            )
+        } else {
+            Text(
+                text = if (settings.theme.wallpaperMode ==
+                    com.example.settingsstore.model.WallpaperMode.CUSTOM_PHOTO
+                ) "ACTIVE: YOUR PHOTO" else "PHOTO SAVED (generative wallpaper is active)",
+                fontFamily = NothingTypographyEngine.ndot55Family,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+                color = palette.accent
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { photoPicker.launch(arrayOf("image/*")) },
+                colors = ButtonDefaults.buttonColors(containerColor = palette.accent)
+            ) {
+                Text("CHOOSE PHOTO", color = Color.White, fontSize = 12.sp)
+            }
+            Button(
+                onClick = {
+                    val uriStr = settings.theme.wallpaperImageUri
+                    if (uriStr == null) {
+                        paletteStatus = "Pick a photo first"
+                    } else {
+                        val extracted = com.example.themeengine.extractWallpaperPalette(context, uriStr)
+                        if (extracted == null) {
+                            paletteStatus = "Couldn't read that image"
+                        } else {
+                            onUpdateSettings { cfg ->
+                                cfg.copy(
+                                    theme = cfg.theme.copy(
+                                        accentHex = extracted.accentHex,
+                                        surfaceHex = extracted.surfaceHex,
+                                        backgroundHex = extracted.backgroundHex,
+                                        drawerBgHex = extracted.backgroundHex,
+                                        widgetBgHex = extracted.surfaceHex,
+                                        folderBgHex = extracted.surfaceHex,
+                                        glyphHighlightHex = extracted.accentHex
+                                    )
+                                )
+                            }
+                            paletteStatus = "Colours extracted from wallpaper"
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = palette.surface)
+            ) {
+                Text("EXTRACT COLOURS", color = palette.accent, fontSize = 12.sp)
+            }
+        }
+        paletteStatus?.let { status ->
+            Text(text = status, fontSize = 11.sp, color = palette.textSecondary)
+        }
+        NothingSliderRow(
+            label = "Photo Dim (readability)",
+            value = settings.theme.wallpaperImageDim,
+            valueRange = 0f..0.85f,
+            onValueChange = { v ->
+                onUpdateSettings { cfg ->
+                    cfg.copy(theme = cfg.theme.copy(wallpaperImageDim = v))
+                }
+            },
+            valueFormatter = { "${(it * 100).roundToInt()}%" }
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NothingPillChip(
+                label = "USE MY PHOTO",
+                selected = settings.theme.wallpaperMode ==
+                    com.example.settingsstore.model.WallpaperMode.CUSTOM_PHOTO,
+                onClick = {
+                    onUpdateSettings { cfg ->
+                        cfg.copy(
+                            theme = cfg.theme.copy(
+                                wallpaperMode = com.example.settingsstore.model.WallpaperMode.CUSTOM_PHOTO
+                            )
+                        )
+                    }
+                }
+            )
+            NothingPillChip(
+                label = "USE GENERATIVE",
+                selected = settings.theme.wallpaperMode !=
+                    com.example.settingsstore.model.WallpaperMode.CUSTOM_PHOTO,
+                onClick = {
+                    onUpdateSettings { cfg ->
+                        cfg.copy(
+                            theme = cfg.theme.copy(
+                                wallpaperMode = com.example.settingsstore.model.WallpaperMode.DOT_MATRIX_GRID
+                            )
+                        )
+                    }
+                }
+            )
+        }
+    }
 
     NothingGroupCard(
         title = "Home Screen Behavior",
@@ -1098,6 +1234,16 @@ private fun TypographyEngineTab(
         },
         valueFormatter = { "${it.roundToInt()}sp" }
     )
+    // Home icon labels get their own size, independent of the preset, wired to the A- / A+ tools.
+    NothingSliderRow(
+        label = "Home Icon Label Size (A- / A+ chips)",
+        value = settings.homeLabelSizeSp,
+        valueRange = 8f..20f,
+        onValueChange = { v ->
+            onUpdateSettings { cfg -> cfg.copy(homeLabelSizeSp = v) }
+        },
+        valueFormatter = { "${it.roundToInt()}sp" }
+    )
     NothingSliderRow(
         label = "Font Weight",
         value = currentConfig.fontWeight.toFloat(),
@@ -1166,6 +1312,87 @@ private fun IconMaskAndGridTab(
     onUpdatePageConfig: (Int, (HomePageConfig) -> HomePageConfig) -> Unit
 ) {
     val palette = LocalNothingPalette.current
+
+    NothingGroupCard(
+        title = "Bottom Deck (Dock)",
+        subtitle = "Size it, shape it, fade it or hide it completely"
+    ) {
+        NothingToggleRow(
+            label = "Show Bottom Deck",
+            description = "Turn off for a completely clean Home screen.",
+            checked = settings.grid.dockVisible,
+            onCheckedChange = { checked ->
+                onUpdateSettings { cfg -> cfg.copy(grid = cfg.grid.copy(dockVisible = checked)) }
+            }
+        )
+        NothingSliderRow(
+            label = "Dock Icon Size",
+            value = settings.grid.dockIconSizeDp,
+            valueRange = 30f..68f,
+            onValueChange = { v ->
+                onUpdateSettings { cfg -> cfg.copy(grid = cfg.grid.copy(dockIconSizeDp = v)) }
+            },
+            valueFormatter = { "${it.roundToInt()}dp" }
+        )
+        NothingSliderRow(
+            label = "Dock Corner Radius",
+            value = settings.grid.dockCornerRadiusDp,
+            valueRange = 8f..36f,
+            onValueChange = { v ->
+                onUpdateSettings { cfg -> cfg.copy(grid = cfg.grid.copy(dockCornerRadiusDp = v)) }
+            },
+            valueFormatter = { "${it.roundToInt()}dp" }
+        )
+        NothingSliderRow(
+            label = "Dock Transparency",
+            value = settings.grid.dockOpacity,
+            valueRange = 0.2f..1f,
+            onValueChange = { v ->
+                onUpdateSettings { cfg -> cfg.copy(grid = cfg.grid.copy(dockOpacity = v)) }
+            },
+            valueFormatter = { "${(it * 100).roundToInt()}%" }
+        )
+        NothingSliderRow(
+            label = "Dock Inner Padding",
+            value = settings.grid.dockVerticalPaddingDp,
+            valueRange = 2f..20f,
+            onValueChange = { v ->
+                onUpdateSettings { cfg -> cfg.copy(grid = cfg.grid.copy(dockVerticalPaddingDp = v)) }
+            },
+            valueFormatter = { "${it.roundToInt()}dp" }
+        )
+        Text("Icons per dock page", fontSize = 12.sp, color = palette.textSecondary)
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            (3..7).forEach { slots ->
+                NothingPillChip(
+                    label = "$slots ICONS",
+                    selected = settings.grid.dockSlotsPerPage == slots,
+                    onClick = {
+                        onUpdateSettings { cfg ->
+                            cfg.copy(grid = cfg.grid.copy(dockSlotsPerPage = slots))
+                        }
+                    }
+                )
+            }
+        }
+        Text("Dock pages", fontSize = 12.sp, color = palette.textSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            (1..3).forEach { pages ->
+                NothingPillChip(
+                    label = if (pages == 1) "1 PAGE" else "$pages PAGES",
+                    selected = settings.grid.dockPageCount == pages,
+                    onClick = {
+                        onUpdateSettings { cfg ->
+                            cfg.copy(grid = cfg.grid.copy(dockPageCount = pages))
+                        }
+                    }
+                )
+            }
+        }
+    }
 
     NothingSectionHeader(
         "Advanced Icon Masking",

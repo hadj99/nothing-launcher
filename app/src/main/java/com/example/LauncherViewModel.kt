@@ -269,6 +269,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun onAppClicked(appItem: IndexedApp, splitScreen: Boolean = false) {
+        val cfg = settings.value
+        // Deep Focus gate: apps on the focus block-list can't be opened at all while focus is on.
+        if (cfg.deepFocusActive && appItem.packageName in cfg.focusBlockedPackages) {
+            val label = cfg.appCustomizations[appItem.packageName]?.customLabel ?: appItem.label
+            showBanner("$label is blocked while Deep Focus is on")
+            return
+        }
         val custom = settings.value.appCustomizations[appItem.packageName]
         val friction = custom?.frictionSeconds ?: 0
         if (friction > 0) {
@@ -279,8 +286,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun launchAppImmediately(appItem: IndexedApp, splitScreen: Boolean = false) {
+        val cfg = settings.value
+        if (cfg.deepFocusActive && appItem.packageName in cfg.focusBlockedPackages) {
+            _pendingFrictionApp.value = null
+            val label = cfg.appCustomizations[appItem.packageName]?.customLabel ?: appItem.label
+            showBanner("$label is blocked while Deep Focus is on")
+            return
+        }
         _pendingFrictionApp.value = null
         appIndexer.launchApp(appItem.packageName, splitScreen)
+    }
+
+    fun setFocusBlockList(packages: List<String>) {
+        viewModelScope.launch {
+            settingsRepo.updateSettings { it.copy(focusBlockedPackages = packages.distinct()) }
+        }
     }
 
     fun dismissFrictionTimer() {

@@ -221,6 +221,14 @@ fun HomeScreenCanvas(
     // The whole quick-tool set lives behind ONE small icon; tap to fan them out, tap to tuck them in.
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
 
+    // Pressing Back on the Home page must NOT dump the user into the stock launcher.
+    BackHandler(enabled = rootPagerState.currentPage == 0 && !editLayoutMode) {
+        if (toolsOpen) {
+            toolsOpen = false
+        }
+        // intentionally consumed — Home is the root of this app
+    }
+
     BackHandler(enabled = editLayoutMode) {
         editLayoutMode = false
     }
@@ -233,9 +241,22 @@ fun HomeScreenCanvas(
     }
 
     val appMap = remember(allApps) { allApps.associateBy { it.packageName } }
-    val homeLabelStyle = remember(settings.typographyHome, palette.textPrimary) {
+    val newAppPkgs = remember(iconVersion, settings.glowNewApps, settings.newAppGlowDays, allApps) {
+        if (settings.glowNewApps && settings.newAppGlowDays > 0) {
+            appIndexer.newlyInstalledPackages(settings.newAppGlowDays)
+        } else {
+            emptySet()
+        }
+    }
+
+    val homeLabelStyle = remember(settings.typographyHome, palette.textPrimary, settings.homeLabelSizeSp) {
+        val size = settings.homeLabelSizeSp.coerceIn(8f, 20f)
         NothingTypographyEngine.resolveTextStyle(settings.typographyHome)
-            .copy(color = palette.textPrimary)
+            .copy(
+                color = palette.textPrimary,
+                fontSize = size.sp,
+                lineHeight = (size * 1.3f).sp
+            )
     }
 
     val cycleDock = {
@@ -438,6 +459,26 @@ fun HomeScreenCanvas(
                                 cfg.copy(typographyHome = cfg.typographyHome.copy(fontChoice = next))
                             }
                             NothingHaptics.performTick(context, settings.physics)
+                        }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.Remove,
+                        label = "A-",
+                        accent = false,
+                        onClick = {
+                            onUpdateSettings { cfg ->
+                                cfg.copy(homeLabelSizeSp = (cfg.homeLabelSizeSp - 1f).coerceIn(8f, 20f))
+                            }
+                        }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.Add,
+                        label = "A+",
+                        accent = false,
+                        onClick = {
+                            onUpdateSettings { cfg ->
+                                cfg.copy(homeLabelSizeSp = (cfg.homeLabelSizeSp + 1f).coerceIn(8f, 20f))
+                            }
                         }
                     )
                     HomeToolChip(
@@ -958,6 +999,7 @@ fun HomeScreenCanvas(
                                             } else {
                                                 { onTriggerGesture(settings.gestures.iconSwipeUp, cycleDock) }
                                             },
+                                            isNewApp = app.packageName in newAppPkgs,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                         if (editLayoutMode) {
@@ -1108,15 +1150,24 @@ fun HomeScreenCanvas(
                 )
             }
 
-            // Multi-Page Swipeable Bottom Dock (up to 3 pages x 7 slots)
+            // Multi-Page Swipeable Bottom Dock (up to 3 pages x 7 slots) — fully adjustable
+            if (settings.grid.dockVisible) {
             NothingSurfaceCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp),
-                cornerRadius = 24.dp,
-                backgroundColor = palette.surface.copy(alpha = 0.86f)
+                    .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp)
+                    .testTag("home_dock"),
+                cornerRadius = settings.grid.dockCornerRadiusDp.coerceIn(8f, 36f).dp,
+                backgroundColor = palette.surface.copy(
+                    alpha = settings.grid.dockOpacity.coerceIn(0.2f, 1f)
+                )
             ) {
-                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Column(
+                    modifier = Modifier.padding(
+                        horizontal = 10.dp,
+                        vertical = settings.grid.dockVerticalPaddingDp.coerceIn(2f, 20f).dp
+                    )
+                ) {
                     if (settings.searchConfig.position == SearchBarPosition.DOCK_INTEGRATED) {
                         HomeInlineSearchPill(
                             placeholder = settings.searchConfig.placeholderText,
@@ -1183,7 +1234,7 @@ fun HomeScreenCanvas(
                                     MaskedAppIcon(
                                         iconBitmap = bitmap,
                                         maskConfig = settings.iconMask,
-                                        baseSize = 46.dp,
+                                        baseSize = settings.grid.dockIconSizeDp.coerceIn(30f, 68f).dp,
                                         customImageUri = custom?.customImageUri,
                                         customGlyphVector = NothingGlyphCatalog.resolve(custom?.customGlyphId),
                                         monochromeOverride = custom?.monochromeOverride,
@@ -1228,6 +1279,7 @@ fun HomeScreenCanvas(
                         }
                     }
                 }
+            }
             }
         }
         } else {
@@ -1403,6 +1455,7 @@ private fun HomeAppTile(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipeUp: (() -> Unit)? = null,
+    isNewApp: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
@@ -1458,23 +1511,41 @@ private fun HomeAppTile(
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        MaskedAppIcon(
-            iconBitmap = bitmap,
-            maskConfig = settings.iconMask,
-            baseSize = 48.dp,
-            customImageUri = custom?.customImageUri,
-            customGlyphVector = NothingGlyphCatalog.resolve(custom?.customGlyphId),
-            monochromeOverride = custom?.monochromeOverride,
-            scaleOverride = custom?.iconScaleOverride,
-            badgeCount = badgeCount,
-            badgeStyle = settings.badgeStyle,
-            dimmedForFocus = settings.deepFocusActive
-        )
+        Box(contentAlignment = Alignment.Center) {
+            if (isNewApp && !settings.deepFocusActive) {
+                // Freshly installed app → soft accent halo so it stands out on the Home grid.
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(palette.accent.copy(alpha = 0.18f))
+                        .border(1.4.dp, palette.accent.copy(alpha = 0.75f), CircleShape)
+                        .testTag("new_app_glow_${app.packageName}")
+                )
+            }
+            MaskedAppIcon(
+                iconBitmap = bitmap,
+                maskConfig = settings.iconMask,
+                baseSize = 48.dp,
+                customImageUri = custom?.customImageUri,
+                customGlyphVector = NothingGlyphCatalog.resolve(custom?.customGlyphId),
+                monochromeOverride = custom?.monochromeOverride,
+                scaleOverride = custom?.iconScaleOverride,
+                badgeCount = badgeCount,
+                badgeStyle = settings.badgeStyle,
+                dimmedForFocus = settings.deepFocusActive
+            )
+        }
         if (settings.grid.showAppLabels) {
             Spacer(Modifier.height(settings.iconMask.labelOffsetDp.dp))
+            val labelSp = settings.homeLabelSizeSp.coerceIn(8f, 20f)
             Text(
                 text = label,
-                style = labelStyle.copy(color = palette.textPrimary),
+                style = labelStyle.copy(
+                    color = palette.textPrimary,
+                    fontSize = labelSp.sp,
+                    lineHeight = (labelSp * 1.3f).sp
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center
@@ -1580,6 +1651,13 @@ private fun FolderGridContent(
     val palette = LocalNothingPalette.current
     val folderApps = folder.packageNames.mapNotNull { appMap[it] }
     val labelStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyHome)
+    val drawerNewPkgs = remember(iconVersion, settings.glowNewApps, settings.newAppGlowDays, allApps) {
+        if (settings.glowNewApps && settings.newAppGlowDays > 0) {
+            appIndexer.newlyInstalledPackages(settings.newAppGlowDays)
+        } else {
+            emptySet()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
         Row(
@@ -1617,7 +1695,8 @@ private fun FolderGridContent(
                     labelStyle = labelStyle,
                     onClick = { onAppClick(app) },
                     onLongClick = { onAppLongPress(app) },
-                    onSwipeUp = null
+                    onSwipeUp = null,
+                    isNewApp = app.packageName in drawerNewPkgs
                 )
             }
         }

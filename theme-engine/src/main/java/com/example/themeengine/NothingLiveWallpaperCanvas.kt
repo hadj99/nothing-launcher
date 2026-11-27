@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -76,6 +78,16 @@ fun NothingLiveWallpaperCanvas(
         Canvas(modifier = modifier.fillMaxSize()) {
             drawRect(color = palette.background)
         }
+        return
+    }
+
+    // User photo wallpaper: decoded once, dimmed by the configured scrim.
+    if (theme.wallpaperMode == WallpaperMode.CUSTOM_PHOTO && theme.wallpaperImageUri != null) {
+        PhotoWallpaperLayer(
+            uri = theme.wallpaperImageUri,
+            dim = theme.wallpaperImageDim,
+            modifier = modifier.fillMaxSize()
+        )
         return
     }
 
@@ -526,6 +538,11 @@ fun NothingLiveWallpaperCanvas(
                 )
             }
 
+            WallpaperMode.CUSTOM_PHOTO -> {
+                // Handled by PhotoWallpaperLayer above (no photo selected → fall through to dots).
+                drawRect(color = palette.background)
+            }
+
             WallpaperMode.OLED_PURE_BLACK -> {
                 val breath = if (animateActive) sin(phase) * 2.5f * intensity else 0f
                 drawCircle(
@@ -537,3 +554,110 @@ fun NothingLiveWallpaperCanvas(
         }
     }
 }
+
+
+/**
+ * Draws the user's own photo as the wallpaper, centre-cropped, with an optional dim scrim so
+ * white icons and dot-matrix labels stay readable.
+ */
+@Composable
+fun PhotoWallpaperLayer(
+    uri: String,
+    dim: Float,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val bitmap = remember(uri) { loadWallpaperBitmap(context, uri, 1440) }
+    if (bitmap == null) {
+        Canvas(modifier = modifier) { drawRect(color = Color.Black) }
+        return
+    }
+    Canvas(modifier = modifier) {
+        val scale = maxOf(size.width / bitmap.width, size.height / bitmap.height)
+        val drawW = bitmap.width * scale
+        val drawH = bitmap.height * scale
+        drawImage(
+            image = bitmap,
+            dstOffset = androidx.compose.ui.unit.IntOffset(
+                ((size.width - drawW) / 2f).toInt(),
+                ((size.height - drawH) / 2f).toInt()
+            ),
+            dstSize = androidx.compose.ui.unit.IntSize(drawW.toInt(), drawH.toInt())
+        )
+        val scrim = dim.coerceIn(0f, 0.9f)
+        if (scrim > 0f) drawRect(color = Color.Black.copy(alpha = scrim))
+    }
+}
+
+fun loadWallpaperBitmap(context: Context, uri: String, maxWidth: Int): androidx.compose.ui.graphics.ImageBitmap? =
+    runCatching {
+        val parsed = android.net.Uri.parse(uri)
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(parsed)?.use { input ->
+            android.graphics.BitmapFactory.decodeStream(input, null, bounds)
+        }
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= maxWidth) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = context.contentResolver.openInputStream(parsed)?.use { input ->
+            android.graphics.BitmapFactory.decodeStream(input, null, opts)
+        } ?: return null
+        bmp.asImageBitmap()
+    }.getOrNull()
+
+/**
+ * Extracts a Material-You-ish palette from the user's wallpaper: the most saturated dominant colour
+ * becomes the accent, a darkened copy becomes the surface, and a near-black tint the background.
+ */
+data class ExtractedWallpaperPalette(
+    val accentHex: String,
+    val surfaceHex: String,
+    val backgroundHex: String,
+    val textSecondaryHex: String
+)
+
+fun extractWallpaperPalette(context: Context, uri: String): ExtractedWallpaperPalette? = runCatching {
+    val bitmap = loadWallpaperBitmap(context, uri, 256)?.asAndroidBitmap() ?: return null
+    val colors = android.graphics.Bitmap.createScaledBitmap(bitmap, 48, 96, true)
+    val buckets = HashMap<Int, IntArray>() // key: quantised rgb
+    var totalSaturation = 0.0
+    for (x in 0 until colors.width) {
+        for (y in 0 until colors.height) {
+            val px = colors.getPixel(x, y)
+            val hsv = FloatArray(3)
+            android.graphics.Color.colorToHSV(px, hsv)
+            val key = (hsv[0].toInt() / 15) // 24 hue buckets
+            val entry = buckets.getOrPut(key) { IntArray(3) }
+            entry[0] += 1
+            entry[1] += px
+            entry[2] = if (hsv[1] > entry[2] / 100f) (hsv[1] * 100).toInt() else entry[2]
+            totalSaturation += hsv[1]
+        }
+    }
+    val dominant = buckets.entries.maxByOrNull { it.value[0] } ?: return null
+    val count = dominant.value[0]
+    val avg = dominant.value[1] / count.coerceAtLeast(1)
+    var r = (android.graphics.Color.red(avg) + 40).coerceAtMost(255)
+    var g = (android.graphics.Color.green(avg) + 40).coerceAtMost(255)
+    var b = (android.graphics.Color.blue(avg) + 40).coerceAtMost(255)
+    // Guarantee a lively accent: if the dominant colour is grey-ish, push towards its hue.
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(avg, hsv)
+    if (hsv[1] < 0.35f) {
+        hsv[1] = 0.72f
+        hsv[2] = 0.95f
+        val boosted = android.graphics.Color.HSVToColor(hsv)
+        r = android.graphics.Color.red(boosted)
+        g = android.graphics.Color.green(boosted)
+        b = android.graphics.Color.blue(boosted)
+    }
+    val accent = String.format("#%02X%02X%02X", r, g, b)
+    val surface = String.format("#%02X%02X%02X", (r * 0.13f).toInt(), (g * 0.13f).toInt(), (b * 0.13f).toInt())
+    val background = String.format("#%02X%02X%02X", (r * 0.05f).toInt(), (g * 0.05f).toInt(), (b * 0.06f).toInt())
+    ExtractedWallpaperPalette(
+        accentHex = accent,
+        surfaceHex = surface,
+        backgroundHex = background,
+        textSecondaryHex = "#9A9AA2"
+    )
+}.getOrNull()

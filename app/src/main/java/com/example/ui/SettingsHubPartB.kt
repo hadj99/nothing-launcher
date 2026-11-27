@@ -7,6 +7,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -98,6 +100,23 @@ internal fun SearchAndDrawerTab(
     val context = LocalContext.current
     val palette = LocalNothingPalette.current
     val listenerGranted = remember(settings) { LiveNotificationBridge.isNotificationAccessEnabled(context) }
+
+    NothingGroupCard(
+        title = "Search Everything Layout",
+        subtitle = "Keep the search surface clean"
+    ) {
+        NothingToggleRow(
+            label = "Quick Tools Row Under The Bar",
+            description = "The pop-up strip of converters/timers right under the search field. Off = clean.",
+            checked = settings.searchConfig.showQuickTools,
+            onCheckedChange = { checked ->
+                onUpdateSettings { cfg ->
+                    cfg.copy(searchConfig = cfg.searchConfig.copy(showQuickTools = checked))
+                }
+            }
+        )
+    }
+
     NothingSectionHeader("App Drawer & Folders")
 
     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -335,6 +354,43 @@ internal fun PhysicsAndGesturesTab(
         )
     }
 
+    NothingGroupCard(
+        title = "Sleep Screen (Always-On Desk Clock)",
+        subtitle = "Tune what the black sleep screen shows and how bright it burns"
+    ) {
+        NothingToggleRow(
+            label = "Show Seconds",
+            description = "Big ticking SEC readout under the clock.",
+            checked = settings.aodShowSeconds,
+            onCheckedChange = { checked -> onUpdateSettings { it.copy(aodShowSeconds = checked) } }
+        )
+        NothingToggleRow(
+            label = "Glyph Animations",
+            description = "Breathing aura, orbiting comets and the pulsing dot equalizer.",
+            checked = settings.aodGlyphs,
+            onCheckedChange = { checked -> onUpdateSettings { it.copy(aodGlyphs = checked) } }
+        )
+        NothingToggleRow(
+            label = "Media Controls",
+            description = "Show the now-playing bar so you can pause straight from sleep.",
+            checked = settings.aodShowMedia,
+            onCheckedChange = { checked -> onUpdateSettings { it.copy(aodShowMedia = checked) } }
+        )
+        NothingToggleRow(
+            label = "Burn-in Protection",
+            description = "Nudges the whole clock around every 20 s to avoid OLED burn-in.",
+            checked = settings.aodBurnInShift,
+            onCheckedChange = { checked -> onUpdateSettings { it.copy(aodBurnInShift = checked) } }
+        )
+        NothingSliderRow(
+            label = "Sleep Screen Brightness",
+            value = settings.aodDimLevel,
+            valueRange = 0.35f..1f,
+            onValueChange = { v -> onUpdateSettings { it.copy(aodDimLevel = v) } },
+            valueFormatter = { "${(it * 100).roundToInt()}%" }
+        )
+    }
+
     NothingSectionHeader("Physics & Animation Lab")
 
     NothingSliderRow(
@@ -473,7 +529,104 @@ internal fun WidgetsAndContextTab(
     val palette = LocalNothingPalette.current
     var selectedWidget by remember { mutableStateOf(CustomWidgetType.DIGITAL_AURA) }
     var editingRule by remember { mutableStateOf<ContextRule?>(null) }
+    var showFocusPicker by remember { mutableStateOf(false) }
+    var focusQuery by remember { mutableStateOf("") }
     val wCfg = settings.widgetConfigFor(selectedWidget)
+
+    NothingGroupCard(
+        title = "Deep Focus Block-List",
+        subtitle = "These apps can't be opened and their notifications are muted while Deep Focus is on"
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = if (settings.deepFocusActive) "DEEP FOCUS IS ON" else "DEEP FOCUS IS OFF",
+                fontFamily = NothingTypographyEngine.ndot55Family,
+                fontSize = 10.sp,
+                letterSpacing = 1.sp,
+                color = if (settings.deepFocusActive) palette.accent else palette.textSecondary,
+                modifier = Modifier.weight(1f)
+            )
+            NothingPillChip(
+                label = if (showFocusPicker) "CLOSE" else "PICK APPS",
+                selected = showFocusPicker,
+                onClick = { showFocusPicker = !showFocusPicker }
+            )
+        }
+        Text(
+            text = "${settings.focusBlockedPackages.size} app(s) blocked" +
+                if (settings.focusBlockedPackages.isEmpty()) " — nothing is blocked yet" else "",
+            fontSize = 11.5.sp,
+            color = palette.textSecondary
+        )
+        if (showFocusPicker) {
+            BasicTextField(
+                value = focusQuery,
+                onValueChange = { focusQuery = it },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = palette.textPrimary,
+                    fontSize = 13.sp
+                ),
+                cursorBrush = SolidColor(palette.accent),
+                decorationBox = { inner ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(palette.surface)
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (focusQuery.isEmpty()) {
+                            Text("Filter apps…", color = palette.textSecondary, fontSize = 13.sp)
+                        }
+                        inner()
+                    }
+                }
+            )
+            val filtered = allApps
+                .filter { it.label.contains(focusQuery, ignoreCase = true) }
+                .take(40)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                filtered.forEach { app ->
+                    val blocked = app.packageName in settings.focusBlockedPackages
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (blocked) palette.accent.copy(alpha = 0.16f) else palette.surface)
+                            .border(
+                                1.dp,
+                                if (blocked) palette.accent else palette.borderSubtle,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .clickable {
+                                val next = if (blocked) {
+                                    settings.focusBlockedPackages - app.packageName
+                                } else {
+                                    settings.focusBlockedPackages + app.packageName
+                                }
+                                onUpdateSettings { it.copy(focusBlockedPackages = next) }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = app.label,
+                            fontSize = 12.5.sp,
+                            color = palette.textPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = if (blocked) "BLOCKED" else "ALLOWED",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 9.sp,
+                            color = if (blocked) palette.accent else palette.textSecondary
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     NothingSectionHeader("15 Custom Nothing Widgets", "Configure per-widget opacity, border, density, precise location & behavior")
     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
