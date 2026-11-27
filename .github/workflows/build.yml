@@ -5,6 +5,9 @@ on:
     branches: [ "main", "master", "arena/19c7b403-nothing-launcher" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,11 +21,31 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Cache signing keystore
+        uses: actions/cache@v5
+        with:
+          path: ~/.android/debug.keystore
+          key: dotos-launcher-signing-keystore-v1
+
+      - name: Ensure signing keystore exists
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
       - name: Set up Android SDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls "$ANDROID_HOME/cmdline-tools" || true
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
@@ -30,12 +53,10 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug and Release APKs
-        id: build
         run: |
           set +e
           ./gradlew assembleDebug assembleRelease --stacktrace > build-output.log 2>&1
           code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           tail -n 60 build-output.log
           exit $code
 
@@ -66,11 +87,55 @@ jobs:
             echo "::error::$(cat "$f" | esc)"
           done
 
+      - name: Verify APK signatures and stage output
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/DotOS-Launcher-v1.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/DotOS-Launcher-v1.0-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.0.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.0-debug.apk
+          ls -lh dist/
+
       - name: Upload APKs
         uses: actions/upload-artifact@v7
         with:
           name: dotos-launcher-apks
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          path: dist/*.apk
           if-no-files-found: error
+
+      - name: Publish APK manifest for retrieval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, subprocess
+
+          apk_path = "dist/DotOS-Launcher-v1.0.apk"
+          with open(apk_path, "rb") as f:
+              data = f.read()
+          sha256 = hashlib.sha256(data).hexdigest()
+          chunk_size = 6 * 1024 * 1024
+          repo = os.environ["GITHUB_REPOSITORY"]
+          shas = []
+          for i in range(0, len(data), chunk_size):
+              chunk = data[i:i + chunk_size]
+              with open("/tmp/blob_payload.json", "w") as pf:
+                  json.dump({
+                      "content": base64.b64encode(chunk).decode("ascii"),
+                      "encoding": "base64"
+                  }, pf)
+              sha = subprocess.check_output([
+                  "gh", "api", f"repos/{repo}/git/blobs",
+                  "--method", "POST",
+                  "--input", "/tmp/blob_payload.json",
+                  "--jq", ".sha"
+              ], text=True).strip()
+              shas.append(sha)
+          manifest = {
+              "apk": os.path.basename(apk_path),
+              "size": len(data),
+              "sha256": sha256,
+              "blobs": shas,
+          }
+          print(f"::notice title=APK_MANIFEST::{json.dumps(manifest)}")
+          PY
