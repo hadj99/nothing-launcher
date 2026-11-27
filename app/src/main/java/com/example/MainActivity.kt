@@ -152,14 +152,20 @@ class MainActivity : ComponentActivity() {
                     preferredDisplayModeId = best.modeId
                 }
             }
-            // API 30+: also declare the exact frame-rate ceiling to the compositor.
+            // API 30+: also declare the exact frame-rate ceiling to the compositor. Done through
+            // reflection because this symbol is only exposed by newer platform revisions.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val target = best?.refreshRate ?: current.refreshRate
                 val ceiling = if (cap <= 0) 0f else cap.toFloat()
-                window.setFrameRate(
-                    if (cap > 0) minOf(target, ceiling) else target,
-                    android.view.WindowManager.LayoutParams.FRAME_RATE_COMPATIBILITY_DEFAULT
-                )
+                val requested = if (cap > 0) minOf(target, ceiling) else target
+                runCatching {
+                    val method = android.view.Window::class.java.getMethod(
+                        "setFrameRate",
+                        Float::class.javaPrimitiveType,
+                        Int::class.javaPrimitiveType
+                    )
+                    method.invoke(window, requested, 0)
+                }
             }
         }
     }

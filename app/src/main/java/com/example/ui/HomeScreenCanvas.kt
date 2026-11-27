@@ -122,6 +122,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
