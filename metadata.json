@@ -1,6 +1,8 @@
 {
   "name": "DotOS Launcher",
-  "description": "Nothing OS-inspired hyper-customizable Android launcher with dot-matrix typography, parametric icon masking, universal multi-source & clipboard search, 11 custom widgets, Always-On desk clock, and context automation.",
+  "description": "Nothing OS-inspired hyper-customizable Android launcher with dot-matrix typography, parametric icon masking, TikTok-style swipe-up All Apps feed, 15 custom widgets, 10 GPU live wallpapers, 8 Digital Aura shapes, dedicated News Space, precise GPS weather, universal multi-source & clipboard search with a Quick Tools deck, Always-On desk clock, and context automation.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

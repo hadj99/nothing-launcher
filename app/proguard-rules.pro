@@ -1,21 +1,26 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Keep annotations, generic signatures, and Kotlin metadata for Retrofit, Moshi, and Room
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,MethodParameters,SourceFile,LineNumberTable
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+-keep class kotlin.Metadata { *; }
+-keep class kotlin.reflect.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep Settings, Room Entities/DAOs, and Moshi JSON models intact
+-keep class com.example.settingsstore.** { *; }
+-keep class com.example.customwidgets.*Dto { *; }
+-keep class com.example.customwidgets.*Response { *; }
+-keep interface com.example.customwidgets.*Api { *; }
+-keep class * extends com.squareup.moshi.JsonAdapter { *; }
+-keep class com.squareup.moshi.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep NotificationListenerService entry point
+-keep class com.example.contextautomation.LiveNotificationBridge { *; }
+
+# Retrofit & OkHttp safe warnings
+-dontwarn retrofit2.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn javax.annotation.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn kotlin.reflect.jvm.internal.**

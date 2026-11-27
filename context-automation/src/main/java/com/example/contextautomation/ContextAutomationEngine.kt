@@ -23,9 +23,13 @@ import androidx.core.content.ContextCompat
 import com.example.settingsstore.model.ContextRule
 import com.example.settingsstore.model.ContextTriggerType
 import com.example.settingsstore.model.QuickToggleItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 @Immutable
@@ -51,15 +55,30 @@ data class DeviceTelemetrySnapshot(
 )
 
 class ContextAutomationEngine(private val context: Context) {
-    private val _telemetry = MutableStateFlow(readSnapshot())
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _telemetry = MutableStateFlow(DeviceTelemetrySnapshot())
     val telemetry: StateFlow<DeviceTelemetrySnapshot> = _telemetry.asStateFlow()
 
     private var torchEnabled = false
+    @Volatile
+    private var lastRefreshElapsedMs: Long = 0L
+
+    init {
+        refreshTelemetryAsync(force = true)
+    }
+
+    fun refreshTelemetryAsync(force: Boolean = false) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now - lastRefreshElapsedMs < 1500L) return
+        lastRefreshElapsedMs = now
+        ioScope.launch {
+            _telemetry.value = readSnapshot()
+        }
+    }
 
     fun refreshTelemetry(): DeviceTelemetrySnapshot {
-        val snap = readSnapshot()
-        _telemetry.value = snap
-        return snap
+        refreshTelemetryAsync(force = false)
+        return _telemetry.value
     }
 
     fun hasBluetoothConnectPermission(): Boolean {
@@ -138,7 +157,7 @@ class ContextAutomationEngine(private val context: Context) {
             QuickToggleItem.HOTSPOT -> openSettingsAction(Settings.ACTION_WIRELESS_SETTINGS)
             QuickToggleItem.ROTATION_LOCK -> openSettingsAction(Settings.ACTION_DISPLAY_SETTINGS)
         }
-        refreshTelemetry()
+        refreshTelemetryAsync(force = true)
     }
 
     private fun toggleFlashlight() {
@@ -162,7 +181,7 @@ class ContextAutomationEngine(private val context: Context) {
                 if (currentlyDnd) NotificationManager.INTERRUPTION_FILTER_ALL
                 else NotificationManager.INTERRUPTION_FILTER_PRIORITY
             )
-            refreshTelemetry()
+            refreshTelemetryAsync(force = true)
         } else {
             openSettingsAction(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
         }

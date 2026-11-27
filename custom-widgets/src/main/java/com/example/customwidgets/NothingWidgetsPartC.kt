@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +86,7 @@ fun MediaVinylWidget(
     config: WidgetAppearanceConfig,
     settings: LauncherSettings,
     mediaState: ActiveMediaState,
+    animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -94,17 +96,21 @@ fun MediaVinylWidget(
         LiveNotificationBridge.isNotificationAccessEnabled(context)
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "vinyl_spin")
-    val spinAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 4800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "vinyl_deg"
-    )
-    val effectiveAngle = if (mediaState.isPlaying) spinAngle else 0f
+    val spinActive = mediaState.isPlaying && !animationsPaused
+    val spinAngleState: State<Float>? = if (spinActive) {
+        val infiniteTransition = rememberInfiniteTransition(label = "vinyl_spin")
+        infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 4800, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "vinyl_deg"
+        )
+    } else {
+        null
+    }
 
     Row(
         modifier = modifier
@@ -113,8 +119,9 @@ fun MediaVinylWidget(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Spinning Dot-Matrix Vinyl Turntable
+        // Spinning Dot-Matrix Vinyl Turntable (deferred Canvas state read -> 0 recompositions)
         Canvas(modifier = Modifier.size(92.dp)) {
+            val effectiveAngle = spinAngleState?.value ?: 0f
             val c = Offset(size.width / 2f, size.height / 2f)
             val maxR = size.minDimension * 0.46f
 
@@ -178,6 +185,7 @@ fun MediaVinylWidget(
                 )
                 if (config.mediaShowVisualizer && mediaState.isPlaying) {
                     Canvas(modifier = Modifier.width(34.dp).height(12.dp)) {
+                        val effectiveAngle = spinAngleState?.value ?: 0f
                         val bars = 5
                         val bw = size.width / bars
                         for (b in 0 until bars) {

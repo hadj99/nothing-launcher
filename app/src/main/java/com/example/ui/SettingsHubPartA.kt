@@ -22,12 +22,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Widgets
+import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -35,6 +45,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +67,7 @@ import com.example.appindexer.InstalledIconPack
 import com.example.appindexer.NothingGlyphCatalog
 import com.example.coreui.DotMatrixDivider
 import com.example.coreui.MaskedAppIcon
+import com.example.coreui.NothingGroupCard
 import com.example.coreui.NothingPillChip
 import com.example.coreui.NothingSectionHeader
 import com.example.coreui.NothingSliderRow
@@ -114,43 +127,57 @@ fun SettingsHubScreen(
     BackHandler { onDismiss() }
     val palette = LocalNothingPalette.current
     var activeTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 6)) }
+    var searchQuery by remember { mutableStateOf("") }
+    var showLivePreview by remember { mutableStateOf(false) }
+    val bodyScroll = rememberScrollState()
 
-    val tabTitles = listOf(
-        "Surface",
-        "Typography",
-        "Icon Mask & Grid",
-        "Search & Drawer",
-        "Physics & Gestures",
-        "Widgets & Context",
-        "Vault & QR"
-    )
+    val tabs = remember { studioTabs }
+    val results = remember(searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) {
+            emptyList()
+        } else {
+            studioSearchIndex.filter { entry ->
+                entry.title.contains(q, ignoreCase = true) ||
+                    entry.summary.contains(q, ignoreCase = true) ||
+                    entry.keywords.any { it.contains(q, ignoreCase = true) }
+            }.take(30)
+        }
+    }
+
+    LaunchedEffect(activeTab) {
+        bodyScroll.scrollTo(0)
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.background)
-            .statusBarsPadding()
+            .then(
+                if (settings.fullScreenHideStatusBar) Modifier.padding(top = 10.dp)
+                else Modifier.statusBarsPadding()
+            )
             .navigationBarsPadding()
             .testTag("settings_hub_screen")
     ) {
-        // Header
+        // ── Android-17 style top app bar ────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
                 Text(
-                    text = "DOTOS STUDIO",
+                    text = "Settings",
                     fontFamily = NothingTypographyEngine.ndot55Family,
-                    fontSize = 18.sp,
-                    color = palette.accent
+                    fontSize = 26.sp,
+                    color = palette.textPrimary
                 )
                 Text(
-                    text = "Live Preview Customization Engine",
-                    fontSize = 11.5.sp,
+                    text = "DotOS Studio  •  ${tabs.getOrNull(activeTab)?.title ?: "Home"}",
+                    fontSize = 12.sp,
                     color = palette.textSecondary
                 )
             }
@@ -159,98 +186,359 @@ fun SettingsHubScreen(
             }
         }
 
-        // Sticky Live Preview Card
-        LiveCustomizationPreviewBanner(
-            settings = settings,
-            sampleApps = allApps.take(4),
-            appIndexer = appIndexer,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-
-        Spacer(Modifier.height(10.dp))
-
-        // Tab Strip
+        // ── Settings search bar ─────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(palette.surface)
+                .border(1.dp, palette.borderSubtle, RoundedCornerShape(28.dp))
+                .padding(start = 14.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            tabTitles.forEachIndexed { idx, title ->
-                NothingPillChip(
-                    label = title,
-                    selected = activeTab == idx,
-                    onClick = { activeTab = idx },
-                    modifier = Modifier.testTag("settings_tab_$idx")
+            Icon(Icons.Rounded.Search, null, tint = palette.accent, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            BasicTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = palette.textPrimary,
+                    fontSize = 14.sp,
+                    fontFamily = NothingTypographyEngine.bodyInterFamily
+                ),
+                cursorBrush = SolidColor(palette.accent),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("settings_search_input"),
+                decorationBox = { innerTextField ->
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = "Search settings — wallpaper, labels, dock, hex…",
+                            fontSize = 13.sp,
+                            color = palette.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    innerTextField()
+                }
+            )
+            if (searchQuery.isNotEmpty()) {
+                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Rounded.Clear, "Clear search", tint = palette.textSecondary, modifier = Modifier.size(18.dp))
+                }
+            } else {
+                Spacer(Modifier.width(10.dp))
+            }
+        }
+
+        if (searchQuery.isBlank()) {
+            // ── Section rail (Android-14/17 style scrollable categories) ─────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                tabs.forEachIndexed { idx, tab ->
+                    val selected = activeTab == idx
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (selected) palette.accent.copy(alpha = 0.20f) else palette.surface)
+                            .border(
+                                1.dp,
+                                if (selected) palette.accent else palette.borderSubtle,
+                                RoundedCornerShape(999.dp)
+                            )
+                            .clickable { activeTab = idx }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("settings_tab_$idx"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = tab.icon,
+                            contentDescription = null,
+                            tint = if (selected) palette.accent else palette.textSecondary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = tab.title,
+                            fontFamily = NothingTypographyEngine.ntype82Family,
+                            fontSize = 11.5.sp,
+                            color = if (selected) palette.textPrimary else palette.textSecondary
+                        )
+                    }
+                }
+            }
+
+            // ── Collapsed live preview ──────────────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(palette.surface.copy(alpha = 0.6f))
+                    .border(1.dp, palette.borderSubtle, RoundedCornerShape(16.dp))
+                    .clickable { showLivePreview = !showLivePreview }
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "LIVE PREVIEW",
+                    fontFamily = NothingTypographyEngine.ndot55Family,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.2.sp,
+                    color = palette.textSecondary
+                )
+                Text(
+                    text = if (showLivePreview) "HIDE" else "SHOW",
+                    fontFamily = NothingTypographyEngine.ntype82Family,
+                    fontSize = 10.sp,
+                    color = palette.accent
+                )
+            }
+
+            if (showLivePreview) {
+                Spacer(Modifier.height(8.dp))
+                LiveCustomizationPreviewBanner(
+                    settings = settings,
+                    sampleApps = allApps.take(4),
+                    appIndexer = appIndexer,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
-        // Active Tab Body
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            when (activeTab) {
-                0 -> SurfaceWallpaperTab(
-                    settings = settings,
-                    themePresets = themePresets,
-                    onUpdateSettings = onUpdateSettings,
-                    onSavePreset = onSavePreset,
-                    onApplyPreset = onApplyPreset,
-                    onDeletePreset = onDeletePreset
+        if (searchQuery.isNotBlank()) {
+            // ── Search results ──────────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = if (results.isEmpty()) "NO SETTINGS MATCH FOR " + searchQuery.trim().uppercase() else "${results.size} MATCHING SETTINGS",
+                    fontFamily = NothingTypographyEngine.ndot55Family,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.1.sp,
+                    color = if (results.isEmpty()) palette.textSecondary else palette.accent
                 )
-                1 -> TypographyEngineTab(
-                    settings = settings,
-                    onUpdateSettings = onUpdateSettings
-                )
-                2 -> IconMaskAndGridTab(
-                    settings = settings,
-                    installedIconPacks = installedIconPacks,
-                    onUpdateSettings = onUpdateSettings,
-                    onToggleDockMiniChip = onToggleDockMiniChip,
-                    onUpdatePageConfig = onUpdatePageConfig
-                )
-                3 -> SearchAndDrawerTab(
-                    settings = settings,
-                    onUpdateSettings = onUpdateSettings,
-                    onAddCustomSearchEngine = onAddCustomSearchEngine,
-                    onClearClipboardHistory = onClearClipboardHistory
-                )
-                4 -> PhysicsAndGesturesTab(
-                    settings = settings,
-                    onUpdateSettings = onUpdateSettings
-                )
-                5 -> WidgetsAndContextTab(
-                    settings = settings,
-                    allApps = allApps,
-                    themePresets = themePresets,
-                    telemetry = telemetry,
-                    hasBluetoothPermission = hasBluetoothPermission,
-                    onRequestBluetoothPermission = onRequestBluetoothPermission,
-                    widgetHostManager = widgetHostManager,
-                    onUpdateSettings = onUpdateSettings,
-                    onUpsertContextRule = onUpsertContextRule,
-                    onDeleteContextRule = onDeleteContextRule,
-                    onBindSystemWidget = onBindSystemWidget
-                )
-                6 -> VaultAndBackupTab(
-                    settings = settings,
-                    settingsRepo = settingsRepo,
-                    onUpdateSettings = onUpdateSettings,
-                    onImportBackup = onImportBackup,
-                    onOpenVault = onOpenVault
-                )
+                results.forEach { entry ->
+                    StudioSearchResultRow(
+                        entry = entry,
+                        tabTitle = tabs.getOrNull(entry.tab)?.title ?: "Settings",
+                        onClick = {
+                            activeTab = entry.tab
+                            searchQuery = ""
+                        }
+                    )
+                }
+                if (results.isEmpty()) {
+                    Text(
+                        text = "Try: wallpaper, hex, labels, dock, gestures, widget, weather, news, aura, vault, backup, search history.",
+                        fontSize = 12.sp,
+                        color = palette.textSecondary
+                    )
+                }
+                Spacer(Modifier.height(28.dp))
             }
-            Spacer(Modifier.height(24.dp))
+        } else {
+            // ── Active section body ─────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(bodyScroll)
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                when (activeTab) {
+                    0 -> SurfaceWallpaperTab(
+                        settings = settings,
+                        themePresets = themePresets,
+                        onUpdateSettings = onUpdateSettings,
+                        onSavePreset = onSavePreset,
+                        onApplyPreset = onApplyPreset,
+                        onDeletePreset = onDeletePreset
+                    )
+                    1 -> TypographyEngineTab(
+                        settings = settings,
+                        onUpdateSettings = onUpdateSettings
+                    )
+                    2 -> IconMaskAndGridTab(
+                        settings = settings,
+                        installedIconPacks = installedIconPacks,
+                        onUpdateSettings = onUpdateSettings,
+                        onToggleDockMiniChip = onToggleDockMiniChip,
+                        onUpdatePageConfig = onUpdatePageConfig
+                    )
+                    3 -> SearchAndDrawerTab(
+                        settings = settings,
+                        onUpdateSettings = onUpdateSettings,
+                        onAddCustomSearchEngine = onAddCustomSearchEngine,
+                        onClearClipboardHistory = onClearClipboardHistory
+                    )
+                    4 -> PhysicsAndGesturesTab(
+                        settings = settings,
+                        onUpdateSettings = onUpdateSettings
+                    )
+                    5 -> WidgetsAndContextTab(
+                        settings = settings,
+                        allApps = allApps,
+                        themePresets = themePresets,
+                        telemetry = telemetry,
+                        hasBluetoothPermission = hasBluetoothPermission,
+                        onRequestBluetoothPermission = onRequestBluetoothPermission,
+                        widgetHostManager = widgetHostManager,
+                        onUpdateSettings = onUpdateSettings,
+                        onUpsertContextRule = onUpsertContextRule,
+                        onDeleteContextRule = onDeleteContextRule,
+                        onBindSystemWidget = onBindSystemWidget
+                    )
+                    6 -> VaultAndBackupTab(
+                        settings = settings,
+                        settingsRepo = settingsRepo,
+                        onUpdateSettings = onUpdateSettings,
+                        onImportBackup = onImportBackup,
+                        onOpenVault = onOpenVault
+                    )
+                }
+                Spacer(Modifier.height(28.dp))
+            }
         }
+    }
+}
+
+private data class StudioTabInfo(
+    val title: String,
+    val blurb: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+private val studioTabs = listOf(
+    StudioTabInfo("Surface", "Wallpapers, hex colours & immersive mode", Icons.Rounded.Palette),
+    StudioTabInfo("Typography", "Fonts, weights, spacing & case", Icons.Rounded.TextFields),
+    StudioTabInfo("Icons & Grid", "Mask shapes, icon scale, rows & dock", Icons.Rounded.GridView),
+    StudioTabInfo("Search & Tools", "Search bar, sources, history & clipboard", Icons.Rounded.Search),
+    StudioTabInfo("Motion", "Physics springs, transitions & gestures", Icons.Rounded.Animation),
+    StudioTabInfo("Widgets", "15 widgets, precise weather & context rules", Icons.Rounded.Widgets),
+    StudioTabInfo("System", "Vault, backup, QR sharing & presets", Icons.Rounded.Security)
+)
+
+private data class StudioSettingEntry(
+    val title: String,
+    val summary: String,
+    val tab: Int,
+    val keywords: List<String> = emptyList()
+)
+
+private val studioSearchIndex = listOf(
+    StudioSettingEntry("Immersive Full-Screen", "Hide the status bar (battery, Wi-Fi, notifications)", 0, listOf("status bar", "fullscreen", "immersive", "hide")),
+    StudioSettingEntry("Show App Names", "Icon-only Home & All Apps grid", 0, listOf("labels", "app names", "text")),
+    StudioSettingEntry("Theme Presets", "Apply, save or delete surface presets", 0, listOf("preset", "theme")),
+    StudioSettingEntry("Wallpaper Mode", "Dot-Matrix, Starfield Warp, Cyber Horizon, Aurora, Constellation, Glyph, Digital Rain, Topographic, Frosted Glass, OLED", 0, listOf("live wallpaper", "wallpaper", "animation", "background")),
+    StudioSettingEntry("OLED Pure Black", "Turn off background pixels for battery savings", 0, listOf("black", "oled", "battery")),
+    StudioSettingEntry("Wallpaper Tilt Parallax", "Accelerometer depth on the wallpaper", 0, listOf("parallax", "tilt")),
+    StudioSettingEntry("Material You Colours", "Extract Android 12+ dynamic accents", 0, listOf("dynamic colour", "material you", "monet")),
+    StudioSettingEntry("Wallpaper Animation Speed", "Speed of the wave & motion pattern", 0, listOf("speed", "motion")),
+    StudioSettingEntry("Dot & Line Brightness", "Wallpaper dot brightness", 0, listOf("brightness", "dots")),
+    StudioSettingEntry("Surface Hex Colours", "18 swatches each for accent, background, surface & text", 0, listOf("hex", "colour", "color", "swatch", "accent", "background")),
+    StudioSettingEntry("Widget & Folder Opacity", "Independent transparency and border thickness", 0, listOf("opacity", "transparency", "border", "blur")),
+    StudioSettingEntry("Font Family", "Pick a bundled font, custom TTF/OTF file or system font", 1, listOf("font", "typeface", "ttf", "otf")),
+    StudioSettingEntry("Font Size & Weight", "Per-surface size, weight and letter spacing", 1, listOf("size", "weight", "spacing")),
+    StudioSettingEntry("Text Case", "Uppercase, lowercase or capitalise labels", 1, listOf("uppercase", "case", "labels")),
+    StudioSettingEntry("Icon Mask Shape", "Circle, squircle, hexagon, pebble and more", 2, listOf("icon", "mask", "shape")),
+    StudioSettingEntry("Icon Scale & Padding", "Icon size, inner padding and border radius", 2, listOf("icon size", "scale", "padding")),
+    StudioSettingEntry("Grid Geometry", "Home rows, columns, padding & margins", 2, listOf("grid", "rows", "columns")),
+    StudioSettingEntry("Dock Slots & Pages", "5-slot dock, extra dock pages & mini chips", 2, listOf("dock", "slots", "phone", "chrome")),
+    StudioSettingEntry("Icon Packs", "Installed third-party icon packs", 2, listOf("icon pack", "theme")),
+    StudioSettingEntry("Badge Style", "Notification badge shape and colour", 2, listOf("badge", "notification")),
+    StudioSettingEntry("Search Bar Position", "Top, floating pill, bottom or dock-integrated", 3, listOf("search bar", "search")),
+    StudioSettingEntry("Search Sources", "Apps, contacts, files, settings, utilities, web", 3, listOf("sources", "priority", "web")),
+    StudioSettingEntry("Custom Search Engines", "Add your own URL template engines", 3, listOf("engine", "google", "duckduckgo")),
+    StudioSettingEntry("Search History", "Only submitted searches are stored now", 3, listOf("history", "recent", "privacy")),
+    StudioSettingEntry("Incognito Search", "Never store queries or clipboard snippets", 3, listOf("incognito", "privacy")),
+    StudioSettingEntry("Clipboard History", "Clear saved clipboard snippets", 3, listOf("clipboard", "clear")),
+    StudioSettingEntry("Quick Tools Deck", "Calculator, converters, stopwatch, password generator", 3, listOf("tools", "calculator", "timer", "password")),
+    StudioSettingEntry("Animation Physics", "Spring stiffness, damping and press bounce", 4, listOf("physics", "spring", "bounce")),
+    StudioSettingEntry("Page Transition", "Slide, fade, depth or cube between pages", 4, listOf("transition", "page")),
+    StudioSettingEntry("Gestures", "Double tap, swipe up/down, pinch & icon swipe actions", 4, listOf("gesture", "swipe", "pinch", "double tap")),
+    StudioSettingEntry("Deep Focus Mode", "Monochrome calm mode with app dimming", 4, listOf("focus", "monochrome")),
+    StudioSettingEntry("Widget Library", "All 15 custom widgets and their layouts", 5, listOf("widget", "stack")),
+    StudioSettingEntry("Digital Aura Shape", "8 selectable aura geometries", 5, listOf("aura", "digital aura", "shape")),
+    StudioSettingEntry("Precise Weather Location", "Fine GPS, city search or exact latitude/longitude", 5, listOf("weather", "gps", "location", "coordinates")),
+    StudioSettingEntry("News Pulse", "Live headlines in the widget", 5, listOf("news", "headlines", "rss")),
+    StudioSettingEntry("Quick Notes", "Sticky note pad stored locally", 5, listOf("notes", "note")),
+    StudioSettingEntry("System Matrix", "RAM, storage and display refresh rate gauges", 5, listOf("ram", "storage", "hz")),
+    StudioSettingEntry("Event Countdown", "Days remaining to your milestone", 5, listOf("countdown", "event")),
+    StudioSettingEntry("Widget Stacking", "Stack widgets and swipe between them", 5, listOf("stack", "widget")),
+    StudioSettingEntry("Context Auto-Profiles", "Auto switch themes by time, Wi-Fi, Bluetooth or battery", 5, listOf("context", "automation", "profile")),
+    StudioSettingEntry("Biometric App Vault", "PIN & fingerprint protected hidden apps", 6, listOf("vault", "hidden", "pin", "biometric")),
+    StudioSettingEntry("Backup & Restore", "Export or import the full launcher configuration", 6, listOf("backup", "restore", "export", "import")),
+    StudioSettingEntry("QR Share", "Share your setup as a QR payload", 6, listOf("qr", "share")),
+    StudioSettingEntry("Quick Tools Cluster", "One icon hides or reveals Edit, Sleep, News, Search, All Apps, Font & Names", 0, listOf("tools", "fab", "top bar", "cluster")),
+    StudioSettingEntry("At a Glance Header", "Rotating calendar, weather, steps & battery glance card", 0, listOf("glance", "calendar", "at a glance")),
+    StudioSettingEntry("Frame Rate Cap", "Adaptive or a hard 30 / 60 / 120 FPS ceiling", 4, listOf("fps", "frame rate", "hz", "refresh", "performance")),
+    StudioSettingEntry("Sleep Screen Glyph Animation", "Animated aura, orbit dots & glyph equalizer on the desk clock", 4, listOf("aod", "sleep", "always on", "glyph", "animation"))
+)
+
+@Composable
+private fun StudioSearchResultRow(
+    entry: StudioSettingEntry,
+    tabTitle: String,
+    onClick: () -> Unit
+) {
+    val palette = LocalNothingPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(palette.surface.copy(alpha = 0.8f))
+            .border(1.dp, palette.borderSubtle, RoundedCornerShape(18.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = entry.title,
+                fontFamily = NothingTypographyEngine.ntype82Family,
+                fontSize = 13.5.sp,
+                color = palette.textPrimary
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = entry.summary,
+                fontSize = 11.5.sp,
+                color = palette.textSecondary,
+                maxLines = 2
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = tabTitle.uppercase(),
+                fontFamily = NothingTypographyEngine.ndot55Family,
+                fontSize = 9.sp,
+                letterSpacing = 1.sp,
+                color = palette.accent
+            )
+        }
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = palette.textSecondary,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 
@@ -354,6 +642,32 @@ private fun SurfaceWallpaperTab(
 ) {
     val palette = LocalNothingPalette.current
     var newPresetName by remember { mutableStateOf("") }
+
+    NothingGroupCard(
+        title = "Home Screen Behavior",
+        subtitle = "Immersive mode & app label visibility"
+    ) {
+        NothingToggleRow(
+            label = "Immersive Full-Screen",
+            description = "Hide status bar icons (battery, Wi-Fi, notifications). Swipe from the top edge to peek.",
+            checked = settings.fullScreenHideStatusBar,
+            onCheckedChange = { checked ->
+                onUpdateSettings { it.copy(fullScreenHideStatusBar = checked) }
+            },
+            modifier = Modifier.testTag("toggle_fullscreen_status_bar")
+        )
+        NothingToggleRow(
+            label = "Show App Names",
+            description = "Turn off for a clean icon-only Home Screen and All Apps grid.",
+            checked = settings.grid.showAppLabels,
+            onCheckedChange = { checked ->
+                onUpdateSettings { cfg ->
+                    cfg.copy(grid = cfg.grid.copy(showAppLabels = checked))
+                }
+            },
+            modifier = Modifier.testTag("toggle_show_app_labels")
+        )
+    }
 
     NothingSectionHeader("Theme Presets", "Pre-loaded & unlimited custom saved presets")
     Row(
@@ -588,25 +902,56 @@ private fun SurfaceWallpaperTab(
     DotMatrixDivider()
     NothingSectionHeader("Surface Hex Colors", "Accent, glyph highlight, background & surface")
 
-    val accentSwatches = listOf("#D71921", "#FFFFFF", "#FF9E1B", "#00E676", "#38BDF8", "#A855F7")
-    Text("Glyph & Accent Highlight", fontSize = 12.sp, color = palette.textSecondary)
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        accentSwatches.forEach { hex ->
-            val selected = settings.theme.accentHex.equals(hex, ignoreCase = true)
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(parseHexColor(hex, Color.Red))
-                    .border(if (selected) 2.5.dp else 1.dp, Color.White, CircleShape)
-                    .clickable {
-                        onUpdateSettings {
-                            it.copy(theme = it.theme.copy(accentHex = hex, glyphHighlightHex = hex))
-                        }
-                    }
-            )
+    HexSwatchGrid(
+        label = "Glyph & Accent Highlight",
+        currentHex = settings.theme.accentHex,
+        onPick = { hex ->
+            onUpdateSettings {
+                it.copy(theme = it.theme.copy(accentHex = hex, glyphHighlightHex = hex))
+            }
         }
-    }
+    )
+
+    HexSwatchGrid(
+        label = "Surface Background",
+        currentHex = settings.theme.backgroundHex,
+        onPick = { hex ->
+            onUpdateSettings {
+                it.copy(
+                    theme = it.theme.copy(
+                        backgroundHex = hex,
+                        // A custom background must never be overridden by the OLED pure-black shortcut
+                        oledPureBlack = hex.equals("#000000", ignoreCase = true)
+                    )
+                )
+            }
+        }
+    )
+
+    HexSwatchGrid(
+        label = "Card & Widget Surface",
+        currentHex = settings.theme.surfaceHex,
+        onPick = { hex ->
+            onUpdateSettings {
+                it.copy(
+                    theme = it.theme.copy(
+                        surfaceHex = hex,
+                        widgetBgHex = hex,
+                        folderBgHex = hex,
+                        drawerBgHex = hex
+                    )
+                )
+            }
+        }
+    )
+
+    HexSwatchGrid(
+        label = "Primary Text",
+        currentHex = settings.theme.textPrimaryHex,
+        onPick = { hex ->
+            onUpdateSettings { it.copy(theme = it.theme.copy(textPrimaryHex = hex)) }
+        }
+    )
 
     var customAccentHex by remember(settings.theme.accentHex) { mutableStateOf(settings.theme.accentHex) }
     OutlinedTextField(
@@ -1158,4 +1503,48 @@ private fun IconMaskAndGridTab(
         onValueChange = { v -> onUpdateSettings { it.copy(grid = it.grid.copy(marginDp = v)) } },
         valueFormatter = { "${it.roundToInt()}dp" }
     )
+}
+
+/** 18-swatch hex palette picker used across every Surface colour slot. */
+@Composable
+private fun HexSwatchGrid(
+    label: String,
+    currentHex: String,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val palette = LocalNothingPalette.current
+    val swatches = listOf(
+        "#D71921", "#FF3B30", "#FF9E1B", "#FFD60A", "#C6FF00", "#00E676",
+        "#00C8A0", "#38BDF8", "#2E6BFF", "#7C4DFF", "#A855F7", "#FF2D95",
+        "#FFFFFF", "#E5E5EA", "#9A9AA2", "#5A5A62", "#1C1C20", "#000000"
+    )
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(label, fontSize = 12.sp, color = palette.textSecondary)
+        Spacer(Modifier.height(6.dp))
+        swatches.chunked(9).forEach { rowHexes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                rowHexes.forEach { hex ->
+                    val selected = currentHex.equals(hex, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(30.dp)
+                            .clip(CircleShape)
+                            .background(parseHexColor(hex, Color.Gray))
+                            .border(
+                                if (selected) 2.5.dp else 1.dp,
+                                if (selected) palette.accent else palette.borderSubtle,
+                                CircleShape
+                            )
+                            .clickable { onPick(hex) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+    }
 }

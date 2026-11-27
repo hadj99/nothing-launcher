@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.settingsstore.db.LauncherDatabase
 import com.example.settingsstore.db.ThemePresetEntity
 import com.example.settingsstore.model.CustomWidgetType
+import com.example.settingsstore.model.GestureAction
 import com.example.settingsstore.model.LauncherSettings
 import com.example.settingsstore.model.SurfaceThemeConfig
 import com.example.settingsstore.model.WallpaperMode
@@ -67,8 +68,44 @@ class SettingsRepository(private val context: Context) {
         seedBuiltInPresets()
         val storedJson = context.launcherDataStore.data.map { it[keySettingsJson] }.first()
         if (!storedJson.isNullOrBlank()) {
-            runCatching { settingsAdapter.fromJson(storedJson) }.getOrNull()?.let {
-                _settings.value = it
+            runCatching { settingsAdapter.fromJson(storedJson) }.getOrNull()?.let { loaded ->
+                val storedVersion = Regex("\"schemaVersion\"\\s*:\\s*(\\d+)")
+                    .find(storedJson)
+                    ?.groupValues?.getOrNull(1)
+                    ?.toIntOrNull()
+                    ?: 0
+                val finalSettings = if (storedVersion < 4) {
+                    var migrated = loaded.copy(schemaVersion = 4)
+                    if (storedVersion < 3) {
+                        // v1.3 defaults: clean 5-slot dock, no accidental search-on-swipe, immersive on.
+                        migrated = migrated.copy(
+                            fullScreenHideStatusBar = true,
+                            grid = migrated.grid.copy(
+                                dockMiniChips = emptyList(),
+                                dockPageCount = 1,
+                                dockSlotsPerPage = 5
+                            ),
+                            gestures = migrated.gestures.copy(
+                                swipeUp = GestureAction.NONE,
+                                swipeDown = if (migrated.gestures.swipeDown == GestureAction.OPEN_SEARCH) {
+                                    GestureAction.NONE
+                                } else {
+                                    migrated.gestures.swipeDown
+                                },
+                                iconSwipeUp = if (migrated.gestures.iconSwipeUp == GestureAction.OPEN_SEARCH) {
+                                    GestureAction.NONE
+                                } else {
+                                    migrated.gestures.iconSwipeUp
+                                }
+                            )
+                        )
+                    }
+                    persistSettings(migrated)
+                    migrated
+                } else {
+                    loaded
+                }
+                _settings.value = finalSettings
             }
         }
     }

@@ -15,6 +15,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -49,47 +51,61 @@ object LauncherPhysicsEngine {
         pageOffset: Float,
         style: PageTransitionStyle,
         intensity: Float = 1.0f
-    ): Modifier = graphicsLayer {
+    ): Modifier = pagerTransitionDeferred(
+        pageOffsetProvider = { pageOffset },
+        style = style,
+        intensity = intensity
+    )
+
+    fun Modifier.pagerTransitionDeferred(
+        pageOffsetProvider: () -> Float,
+        style: PageTransitionStyle,
+        intensity: Float = 1.0f
+    ): Modifier {
+        if (style == PageTransitionStyle.FLAT) return this
         val factor = intensity.coerceIn(0.2f, 2.0f)
-        val absOffset = (pageOffset.absoluteValue * factor).coerceIn(0f, 1.5f)
-        when (style) {
-            PageTransitionStyle.FLAT -> Unit
+        return graphicsLayer {
+            val pageOffset = pageOffsetProvider()
+            val absOffset = (pageOffset.absoluteValue * factor).coerceIn(0f, 1.5f)
+            when (style) {
+                PageTransitionStyle.FLAT -> Unit
 
-            PageTransitionStyle.DEPTH -> {
-                val scale = (1f - (absOffset * 0.14f)).coerceIn(0.6f, 1f)
-                scaleX = scale
-                scaleY = scale
-                alpha = (1f - absOffset * 0.55f).coerceIn(0f, 1f)
-            }
-
-            PageTransitionStyle.CUBE -> {
-                cameraDistance = 18f * density
-                transformOrigin = TransformOrigin(if (pageOffset < 0f) 1f else 0f, 0.5f)
-                rotationY = (-36f * pageOffset * factor).coerceIn(-68f, 68f)
-                alpha = (1f - absOffset * 0.3f).coerceIn(0.2f, 1f)
-            }
-
-            PageTransitionStyle.PARALLAX -> {
-                translationX = -pageOffset * size.width * 0.18f * factor
-                val scale = (1f - absOffset * 0.06f).coerceIn(0.75f, 1f)
-                scaleX = scale
-                scaleY = scale
-                alpha = (1f - absOffset * 0.25f).coerceIn(0.4f, 1f)
-            }
-
-            PageTransitionStyle.ACCORDION -> {
-                transformOrigin = TransformOrigin(if (pageOffset < 0f) 0f else 1f, 0.5f)
-                scaleX = (1f - absOffset * 0.65f).coerceIn(0.2f, 1f)
-                alpha = (1f - absOffset * 0.4f).coerceIn(0.2f, 1f)
-            }
-
-            PageTransitionStyle.STACK -> {
-                if (pageOffset > 0f) {
-                    translationX = -pageOffset * size.width * 0.5f * factor
-                    val scale = (1f - absOffset * 0.12f).coerceIn(0.65f, 1f)
+                PageTransitionStyle.DEPTH -> {
+                    val scale = (1f - (absOffset * 0.14f)).coerceIn(0.6f, 1f)
                     scaleX = scale
                     scaleY = scale
-                    alpha = (1f - absOffset * 0.7f).coerceIn(0f, 1f)
+                    alpha = (1f - absOffset * 0.55f).coerceIn(0f, 1f)
+                }
+
+                PageTransitionStyle.CUBE -> {
+                    cameraDistance = 18f * density
+                    transformOrigin = TransformOrigin(if (pageOffset < 0f) 1f else 0f, 0.5f)
+                    rotationY = (-36f * pageOffset * factor).coerceIn(-68f, 68f)
+                    alpha = (1f - absOffset * 0.3f).coerceIn(0.2f, 1f)
+                }
+
+                PageTransitionStyle.PARALLAX -> {
+                    translationX = -pageOffset * size.width * 0.18f * factor
+                    val scale = (1f - absOffset * 0.06f).coerceIn(0.75f, 1f)
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = (1f - absOffset * 0.25f).coerceIn(0.4f, 1f)
+                }
+
+                PageTransitionStyle.ACCORDION -> {
+                    transformOrigin = TransformOrigin(if (pageOffset < 0f) 0f else 1f, 0.5f)
+                    scaleX = (1f - absOffset * 0.65f).coerceIn(0.2f, 1f)
+                    alpha = (1f - absOffset * 0.4f).coerceIn(0.2f, 1f)
+                }
+
+                PageTransitionStyle.STACK -> {
+                    if (pageOffset > 0f) {
+                        translationX = -pageOffset * size.width * 0.5f * factor
+                        val scale = (1f - absOffset * 0.12f).coerceIn(0.65f, 1f)
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = (1f - absOffset * 0.7f).coerceIn(0f, 1f)
+                    }
                 }
             }
         }
@@ -136,6 +152,7 @@ fun ShakeGestureObserver(
     onShakeDetected: () -> Unit
 ) {
     val context = LocalContext.current
+    val latestCallback by rememberUpdatedState(onShakeDetected)
     DisposableEffect(enabled) {
         if (!enabled) {
             onDispose { }
@@ -152,14 +169,14 @@ fun ShakeGestureObserver(
                     val now = System.currentTimeMillis()
                     if (gForce > 2.35 && now - lastShakeTime > 1200L) {
                         lastShakeTime = now
-                        onShakeDetected()
+                        latestCallback()
                     }
                 }
 
                 override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
             }
             if (accel != null) {
-                sensorManager.registerListener(listener, accel, SensorManager.SENSOR_DELAY_UI)
+                sensorManager.registerListener(listener, accel, SensorManager.SENSOR_DELAY_NORMAL)
             }
             onDispose {
                 sensorManager?.unregisterListener(listener)

@@ -318,25 +318,38 @@ fun TimeDateWidget(
     config: WidgetAppearanceConfig,
     settings: LauncherSettings,
     onCycleFormat: () -> Unit,
+    animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    LaunchedEffect(Unit) {
+    val needsSecondTick = config.timeFormatMode == TimeFormatMode.VERTICAL_DOT
+    LaunchedEffect(animationsPaused, needsSecondTick) {
+        if (animationsPaused) return@LaunchedEffect
         while (true) {
-            nowMillis = System.currentTimeMillis()
-            delay(1000L)
+            val current = System.currentTimeMillis()
+            nowMillis = current
+            val sleepMs = if (needsSecondTick) {
+                1000L - (current % 1000L)
+            } else {
+                (60_000L - (current % 60_000L)).coerceIn(1_000L, 60_000L)
+            }
+            delay(sleepMs.coerceAtLeast(250L))
         }
     }
 
-    val date = remember(nowMillis / 1000L) { Date(nowMillis) }
-    val hourStr = remember(date) { SimpleDateFormat("HH", Locale.getDefault()).format(date) }
-    val minStr = remember(date) { SimpleDateFormat("mm", Locale.getDefault()).format(date) }
-    val secStr = remember(date) { SimpleDateFormat("ss", Locale.getDefault()).format(date) }
-    val dateLabel = remember(date) {
-        SimpleDateFormat("EEE, MMM dd", Locale.getDefault()).format(date).uppercase()
-    }
+    val hhFmt = remember { SimpleDateFormat("HH", Locale.getDefault()) }
+    val mmFmt = remember { SimpleDateFormat("mm", Locale.getDefault()) }
+    val ssFmt = remember { SimpleDateFormat("ss", Locale.getDefault()) }
+    val dateFmt = remember { SimpleDateFormat("EEE, MMM dd", Locale.getDefault()) }
+
+    val bucketKey = if (needsSecondTick) nowMillis / 1000L else nowMillis / 60_000L
+    val date = remember(bucketKey) { Date(nowMillis) }
+    val hourStr = remember(bucketKey) { hhFmt.format(date) }
+    val minStr = remember(bucketKey) { mmFmt.format(date) }
+    val secStr = remember(bucketKey) { if (needsSecondTick) ssFmt.format(date) else "00" }
+    val dateLabel = remember(bucketKey) { dateFmt.format(date).uppercase() }
 
     val titleStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetTitle)
     val dataStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetData)
@@ -488,18 +501,17 @@ fun WeatherWidget(
     settings: LauncherSettings,
     weatherState: WeatherState,
     onRefreshWeather: () -> Unit,
+    weatherRepo: WeatherRepository? = null,
+    onUpdateWeatherConfig: ((WidgetAppearanceConfig) -> WidgetAppearanceConfig) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
     val scope = rememberCoroutineScope()
     val titleStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetTitle)
     val dataStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetData)
+    var showLocationDialog by remember { mutableStateOf(false) }
 
-    val locationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { onRefreshWeather() }
-
-    LaunchedEffect(config.weatherCity) {
+    LaunchedEffect(config.weatherCity, config.weatherUsePreciseGps, config.weatherCustomLat, config.weatherCustomLon) {
         if (weatherState.temperatureC == null && !weatherState.isLoading) {
             onRefreshWeather()
         }
@@ -517,10 +529,11 @@ fun WeatherWidget(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "${weatherState.cityLabel.uppercase()} • ${weatherState.conditionText}",
-                    style = titleStyle.copy(color = palette.textSecondary)
+                    style = titleStyle.copy(color = palette.textSecondary),
+                    modifier = Modifier.clickable { showLocationDialog = true }
                 )
                 val tempLabel = weatherState.temperatureC?.let { "${it.roundToInt()}°C" }
                     ?: if (weatherState.isLoading) "..." else "--°C"
@@ -619,15 +632,29 @@ fun WeatherWidget(
                     color = palette.textSecondary
                 )
                 Text(
-                    text = "GPS",
-                    fontFamily = NothingTypographyEngine.ntype82Family,
+                    text = "SET LOCATION",
+                    fontFamily = NothingTypographyEngine.ndot55Family,
                     fontSize = 10.sp,
                     color = palette.accent,
-                    modifier = Modifier.clickable {
-                        locationLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
-                    }
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(palette.accent.copy(alpha = 0.16f))
+                        .clickable { showLocationDialog = true }
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
         }
+    }
+
+    if (showLocationDialog) {
+        PreciseWeatherLocationDialog(
+            config = config,
+            weatherRepo = weatherRepo,
+            onApplyLocation = { updatedCfg ->
+                onUpdateWeatherConfig { updatedCfg }
+                onRefreshWeather()
+            },
+            onDismiss = { showLocationDialog = false }
+        )
     }
 }

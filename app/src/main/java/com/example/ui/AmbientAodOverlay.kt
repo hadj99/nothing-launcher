@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -45,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
@@ -110,6 +112,25 @@ fun AmbientAodOverlay(
         label = "aod_phase"
     )
 
+    val breathPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "aod_breath"
+    )
+    val tickPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "aod_tick"
+    )
+
     val clockStr = remember(timeMillis) {
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timeMillis))
     }
@@ -142,17 +163,79 @@ fun AmbientAodOverlay(
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val c = center
                     val r = size.minDimension * 0.44f
+
+                    // Breathing accent halo — a soft radial glow that expands with each "breath"
+                    val haloRadius = r * (1.18f + 0.10f * breathPhase)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                palette.accent.copy(alpha = 0.16f + 0.08f * breathPhase),
+                                Color.Transparent
+                            ),
+                            center = c,
+                            radius = haloRadius
+                        ),
+                        radius = haloRadius,
+                        center = c
+                    )
+
+                    // Orbiting accent "comet" dots (two speeds for organic motion)
+                    val orbitA = auraPhase * 0.55f
+                    val orbitB = -auraPhase * 0.85f
+                    drawCircle(
+                        color = palette.accent,
+                        radius = 3.6f,
+                        center = Offset(
+                            c.x + r * 1.22f * cos(orbitA).toFloat(),
+                            c.y + r * 1.22f * sin(orbitA).toFloat()
+                        )
+                    )
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.55f),
+                        radius = 2.0f,
+                        center = Offset(
+                            c.x + r * 1.34f * cos(orbitB).toFloat(),
+                            c.y + r * 1.34f * sin(orbitB).toFloat()
+                        )
+                    )
+
+                    // Morphing dot-matrix ring (the Digital Aura waveform)
                     val dots = 36
                     for (i in 0 until dots) {
                         val theta = 2.0 * PI * i / dots
                         val wave = sin(theta * 3.0 + auraPhase).toFloat()
                         val rad = r + wave * (3f + velocity.velocityScore * 5f)
+                        val isAccent = i % 6 == 0
                         drawCircle(
-                            color = if (i % 6 == 0) palette.accent else Color.White.copy(alpha = 0.45f),
-                            radius = if (i % 6 == 0) 3.4f else 1.8f,
+                            color = if (isAccent) {
+                                palette.accent.copy(alpha = 0.65f + 0.35f * breathPhase)
+                            } else {
+                                Color.White.copy(alpha = 0.30f + 0.28f * ((wave + 1f) / 2f))
+                            },
+                            radius = if (isAccent) 3.4f + 1.2f * breathPhase else 1.8f,
                             center = Offset(c.x + rad * cos(theta).toFloat(), c.y + rad * sin(theta).toFloat())
                         )
                     }
+
+                    // Inner ticking glyph arcs — 4 quarter arcs sweeping at different paces
+                    val arcR = r * 0.78f
+                    for (q in 0 until 4) {
+                        val sweepStart = auraPhase * (0.6f + q * 0.22f) + q * (PI.toFloat() / 2f)
+                        drawArc(
+                            color = if (q % 2 == 0) {
+                                Color.White.copy(alpha = 0.16f + 0.10f * tickPhase)
+                            } else {
+                                palette.accent.copy(alpha = 0.22f)
+                            },
+                            startAngle = Math.toDegrees(sweepStart.toDouble()).toFloat(),
+                            sweepAngle = 42f,
+                            useCenter = false,
+                            topLeft = Offset(c.x - arcR, c.y - arcR),
+                            size = androidx.compose.ui.geometry.Size(arcR * 2f, arcR * 2f),
+                            style = Stroke(width = 1.6f)
+                        )
+                    }
+
                     drawCircle(
                         color = Color.White.copy(alpha = 0.12f),
                         radius = r * 0.72f,
@@ -185,6 +268,36 @@ fun AmbientAodOverlay(
                 letterSpacing = 1.6.sp,
                 color = Color(0xFFB4B4BC)
             )
+
+            // Animated dot-matrix glyph equalizer (pure draw scope — no recompositions)
+            Canvas(
+                modifier = Modifier
+                    .width(132.dp)
+                    .height(20.dp)
+            ) {
+                val bars = 9
+                val stepX = size.width / bars
+                val stepY = size.height / 5f
+                for (b in 0 until bars) {
+                    val level = (sin(tickPhase * 2.0 * PI + b * 0.7).toFloat() + 1f) / 2f
+                    val lit = (level * 5f).toInt().coerceIn(1, 5)
+                    for (d in 0 until 5) {
+                        val on = d < lit
+                        drawCircle(
+                            color = when {
+                                on && d >= 3 -> palette.accent
+                                on -> Color.White.copy(alpha = 0.78f)
+                                else -> Color.White.copy(alpha = 0.10f)
+                            },
+                            radius = if (on) 1.9f else 1.2f,
+                            center = Offset(
+                                stepX * b + stepX / 2f,
+                                size.height - stepY * d - stepY / 2f
+                            )
+                        )
+                    }
+                }
+            }
 
             // Status pills row (Battery + Unread Alerts)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

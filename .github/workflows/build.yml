@@ -1,14 +1,19 @@
-name: Build Debug APK
+name: Build & Release APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "arena/19c7b403-nothing-launcher" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
+    name: Build & Release DotOS Launcher APK
     runs-on: ubuntu-latest
-
+    # Skip rebuilding if commit only updates prebuilt APK binaries or docs
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-ci-build]') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -18,15 +23,164 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Cache signing keystore
+        uses: actions/cache@v5
+        with:
+          path: ~/.android/debug.keystore
+          key: dotos-launcher-signing-keystore-v1
+
+      - name: Ensure signing keystore exists
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Set up Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: Build Release APK
+        run: |
+          set +e
+          ./gradlew assembleRelease --stacktrace > build-output.log 2>&1
+          code=$?
+          tail -n 60 build-output.log
+          exit $code
 
-      - name: Upload APK
+      - name: Report build failure
+        if: failure()
+        run: |
+          set +e
+          if [ ! -f build-output.log ]; then
+            echo "::error::Gradle build failed (no build-output.log found)."
+            exit 0
+          fi
+          {
+            echo "=== FAILURE SUMMARY ==="
+            grep -E "FAILURE:|What went wrong|Execution failed|Caused by" build-output.log | head -n 40
+            echo ""
+            echo "=== WHAT WENT WRONG (detail) ==="
+            sed -n '/What went wrong/,/^\* Try/p' build-output.log | head -n 40
+            echo ""
+            echo "=== KOTLIN ERRORS ==="
+            grep -E "^e: |\.kt:[0-9]+:[0-9]+: error" build-output.log | head -n 60
+            echo ""
+            echo "=== FAILED TASKS ==="
+            grep -E "FAILED" build-output.log | head -n 20
+          } > failure-summary.txt
+          esc() { sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g'; }
+          split -b 2200 failure-summary.txt chunk_
+          for f in chunk_*; do
+            echo "::error::$(cat "$f" | esc)"
+          done
+
+      - name: Verify APK signature and stage v1.5 output
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/DotOS-Launcher-v1.5.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.5.apk
+          ls -lh dist/
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: launcher-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: dotos-launcher-v1.5-apk
+          path: dist/DotOS-Launcher-v1.5.apk
+          if-no-files-found: error
+
+      - name: Create/Update GitHub Release v1.5.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES=$(cat <<'EOF'
+          ### DotOS Launcher v1.5 — one-tap tools, widgets ride higher
+          Install **DotOS-Launcher-v1.5.apk** directly over v1.0 – v1.4 — same package ID and signing key (`versionCode 8`), so all your apps, layouts, and settings stay intact!
+
+          **New in v1.5:**
+          - **One tiny tools icon instead of a crowded top bar** — EDIT, SLEEP (desk clock), NEWS and SEARCH now live inside the single round tools button at the top-right. Tap it and the whole set fans out; tap again and everything tucks back in.
+          - **The rest of the tools live up top too** — the fan-out also carries **ALL APPS** (jump straight to the feed), **FONT** (cycles NDOT-55 → NType-82 → Clean Sans → NDOT-77 for Home labels) and **NAMES** (instant hide/show of app names).
+          - **Widgets moved up** — the page-name bar now only shows while editing and all top padding is tightened, so the space above your widgets is real estate instead of empty gutter.
+          - **Quick Glance now sits on the left side 👈** — a slim wrap-content pill pinned to the left edge of Home that rotates calendar event (accent 15 min before the start), weather alert, step goal and battery — without pushing anything down.
+          - **Hide app names** — new NAMES toggle in the tools cluster plus the existing Settings switch; icon-only Home and All Apps grid.
+          - Everything from v1.4 stays: butter-smooth All Apps (serialized off-thread icon baking behind a 12 MB LRU, zero overdraw), adaptive 30/60/120 FPS cap, sleep-screen glyph animations, debounced search, precompiled baseline profile + R8.
+
+          **Base feature set carried into v1.5:**
+          - **App Drawer removed completely** — the drawer overlay and the dock drawer button are gone; the dock now holds **Phone · SMS · Camera · Chrome · Notes**, resolved through real system intents so every OEM works.
+          - **TikTok-style swipe-up All Apps** — swipe up on Home for a vertical All Apps feed with **Most Used Apps** pinned on top; the Home Most Used section was removed as requested.
+          - **Hide app names** — new "Show App Names" switch for a clean icon-only Home & Apps grid.
+          - **Reorganized Studio** — every settings section is now a clean grouped card (Surface & Wallpaper · Typography · Icons & Grid · Search & Tools · Motion & Gestures · Widgets · System & Vault).
+          - **18 hex swatches** per colour slot (accent, background, surface, text) plus custom hex entry, with OLED pure-black auto-handling.
+          - **4 new Home live wallpapers** (Starfield Warp, Cyber Grid Horizon, Aurora Waves, Constellation, Concentric Glyph, Digital Rain — 10 total) rendered with batched GPU Canvas draw calls.
+          - **Add AND remove Home pages**, no more "PAGE X READY" placeholder box, plus a long-press **Home Studio popup** that lets you pick any of the 15 widgets for the current page, add/remove pages, edit layout, jump to wallpaper/hex or launcher settings.
+          - **News Place** — a dedicated News Space with 5 category tabs (Top World, Tech & AI, Science, Business, Sports), live RSS/Atom headlines, refresh and full article reader.
+          - **Precise weather location** — fine GPS fix with reverse-geocoded label, city/district search results, or exact latitude/longitude entry.
+          - **8 selectable Digital Aura shapes** — Organic Ring, Sacred Hexagon, Pulsar Star, Vortex Spiral, Infinity Loop, Pulse Equalizer, Diamond Core and Glyph Radar, tappable to cycle right on the widget.
+          - **Immersive full-screen mode** — hides the status bar (battery, Wi-Fi, notifications) and reveals it on edge swipe.
+          - **Search Everything fixed** — Search never opens on a swipe any more, only on an explicit press; search history now records only submitted queries (keystroke prefixes are purged on upgrade).
+          - **More search tools** — a Quick Tools Deck above results: calculator pad, unit/FX converters, stopwatch & timers, password/PIN generator, clipboard reader, coin/dice, torch.
+          - **4 brand-new widgets** — News Pulse, Quick Notes, System Matrix (RAM/storage/Hz) and Event Countdown (15 widgets total).
+          - **Performance** — widgets pause off-screen pages, single-DEX R8 build, lifecycle-aware sensors, and 0-recomposition Canvas draw scopes.
+          EOF
+          )
+          if gh release view v1.5.0 >/dev/null 2>&1; then
+            gh release upload v1.5.0 dist/DotOS-Launcher-v1.5.apk --clobber
+            gh release edit v1.5.0 --title "DotOS Launcher v1.5" --notes "$NOTES" --latest
+          else
+            gh release create v1.5.0 dist/DotOS-Launcher-v1.5.apk \
+              --target "${{ github.sha }}" \
+              --title "DotOS Launcher v1.5" \
+              --notes "$NOTES" \
+              --latest
+          fi
+
+      - name: Publish APK manifest for workspace sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, subprocess
+
+          apk_path = "dist/DotOS-Launcher-v1.5.apk"
+          with open(apk_path, "rb") as f:
+              data = f.read()
+          sha256 = hashlib.sha256(data).hexdigest()
+          chunk_size = 6 * 1024 * 1024
+          repo = os.environ["GITHUB_REPOSITORY"]
+          shas = []
+          for i in range(0, len(data), chunk_size):
+              chunk = data[i:i + chunk_size]
+              with open("/tmp/blob_payload.json", "w") as pf:
+                  json.dump({
+                      "content": base64.b64encode(chunk).decode("ascii"),
+                      "encoding": "base64"
+                  }, pf)
+              sha = subprocess.check_output([
+                  "gh", "api", f"repos/{repo}/git/blobs",
+                  "--method", "POST",
+                  "--input", "/tmp/blob_payload.json",
+                  "--jq", ".sha"
+              ], text=True).strip()
+              shas.append(sha)
+          manifest = {
+              "apk": os.path.basename(apk_path),
+              "size": len(data),
+              "sha256": sha256,
+              "blobs": shas,
+          }
+          print(f"::notice title=APK_MANIFEST::{json.dumps(manifest)}")
+          PY

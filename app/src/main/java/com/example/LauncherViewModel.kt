@@ -11,7 +11,6 @@ import com.example.contextautomation.ActiveMediaState
 import com.example.contextautomation.DeviceTelemetrySnapshot
 import com.example.contextautomation.LiveNotificationBridge
 import com.example.customwidgets.WeatherState
-import com.example.settingsstore.db.LauncherDatabase
 import com.example.settingsstore.db.StepHistoryEntity
 import com.example.settingsstore.db.ThemePresetEntity
 import com.example.settingsstore.model.AppCustomization
@@ -26,6 +25,7 @@ import com.example.settingsstore.model.LauncherSettings
 import com.example.settingsstore.model.SurfaceThemeConfig
 import com.example.settingsstore.model.TimeFormatMode
 import com.example.settingsstore.model.WidgetAppearanceConfig
+import com.example.settingsstore.model.WidgetStackSlot
 import com.example.settingsstore.model.YearViewMode
 import com.example.universalsearch.UniversalSearchState
 import kotlinx.coroutines.Job
@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -48,21 +49,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val weatherRepo = app.weatherRepository
     val widgetHostManager = app.widgetHostManager
 
-    private val database = LauncherDatabase.getInstance(application)
-
+    // Eagerly kept hot in memory so leaving the launcher and pressing Home
+    // never cancels or recalculates app lists, presets, or step history.
     val settings: StateFlow<LauncherSettings> = settingsRepo.settings
     val allApps: StateFlow<List<IndexedApp>> = appIndexer.allApps
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val mostUsedApps: StateFlow<List<IndexedApp>> = appIndexer.mostUsedApps
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val iconVersion: StateFlow<Int> = appIndexer.iconVersion
     val screenTimeVelocity: StateFlow<ScreenTimeVelocity> = appIndexer.screenTimeVelocity
 
     val themePresets: StateFlow<List<Pair<ThemePresetEntity, SurfaceThemeConfig>>> =
-        settingsRepo.themePresets.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        settingsRepo.themePresets.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val stepHistory: StateFlow<List<StepHistoryEntity>> = stepRepo.last7Days
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val todaySteps: StateFlow<Int> = stepRepo.todaySteps
     val stepSensorAvailable: StateFlow<Boolean> = stepRepo.sensorAvailable
 
@@ -70,7 +71,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val telemetry: StateFlow<DeviceTelemetrySnapshot> = contextEngine.telemetry
 
     val recentQueries: StateFlow<List<String>> = searchEngine.recentQueries
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val badgeCounts: StateFlow<Map<String, Int>> = LiveNotificationBridge.badgeCounts
     val mediaState: StateFlow<ActiveMediaState> = LiveNotificationBridge.mediaState
@@ -108,6 +109,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _isAmbientAodVisible = MutableStateFlow(false)
     val isAmbientAodVisible: StateFlow<Boolean> = _isAmbientAodVisible.asStateFlow()
 
+    private val _isNewsVisible = MutableStateFlow(false)
+    val isNewsVisible: StateFlow<Boolean> = _isNewsVisible.asStateFlow()
+
+    private val _allAppsRequestTick = MutableStateFlow(0)
+    val allAppsRequestTick: StateFlow<Int> = _allAppsRequestTick.asStateFlow()
+
+    fun requestAllAppsFeed() {
+        _allAppsRequestTick.value += 1
+    }
+
     private val _pendingFrictionApp = MutableStateFlow<IndexedApp?>(null)
     val pendingFrictionApp: StateFlow<IndexedApp?> = _pendingFrictionApp.asStateFlow()
 
@@ -118,6 +129,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
     private var searchJob: Job? = null
+    private var lastResumeTelemetryMs: Long = 0L
 
     init {
         viewModelScope.launch {
@@ -126,9 +138,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             evaluateContextAutomation()
         }
         viewModelScope.launch {
-            combine(_searchQuery, allApps, settings) { q, apps, cfg ->
-                Triple(q, apps, cfg)
-            }.collect { (q, apps, cfg) ->
+            // Debounced so a fast typist never fires a full multi-source search per keystroke;
+            // the actual filtering still happens off the main thread inside searchEngine.search().
+            val debouncedQuery = _searchQuery.debounce { q -> if (q.isBlank()) 0L else 110L }
+            combine(_isSearchVisible, debouncedQuery, allApps, settings) { visible, q, apps, cfg ->
+                if (!visible) null else Triple(q, apps, cfg)
+            }.collect { payload ->
+                if (payload == null) return@collect
+                val (q, apps, cfg) = payload
                 searchJob?.cancel()
                 searchJob = launch {
                     _searchState.value = searchEngine.search(q, apps, cfg)
@@ -148,6 +165,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Lightweight resume check: never re-indexes apps (PackageMonitor handles installs/uninstalls
+     * automatically) and throttles telemetry/usage updates so returning to Home is instant.
+     */
+    fun onLauncherResumed() {
+        val now = System.currentTimeMillis()
+        if (now - lastResumeTelemetryMs < 180_000L) return
+        lastResumeTelemetryMs = now
+        viewModelScope.launch {
+            appIndexer.refreshUsageStats(force = false)
+            contextEngine.refreshTelemetry()
+            evaluateContextAutomation()
+        }
+    }
+
     fun refreshAppsAndStats() {
         viewModelScope.launch {
             appIndexer.refreshInstalledApps(settings.value.iconMask.selectedIconPackPackage)
@@ -160,10 +192,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val rule = contextEngine.evaluateMatchingRule(settings.value.contextRules)
             if (rule == null) {
-                _contextHiddenPackages.value = emptySet()
+                if (_contextHiddenPackages.value.isNotEmpty()) {
+                    _contextHiddenPackages.value = emptySet()
+                }
                 return@launch
             }
-            _contextHiddenPackages.value = rule.hiddenPackages.toSet()
+            val hidden = rule.hiddenPackages.toSet()
+            if (_contextHiddenPackages.value != hidden) {
+                _contextHiddenPackages.value = hidden
+            }
             if (settings.value.activeProfileName != rule.profileName) {
                 settingsRepo.applyPresetById(rule.targetPresetId)
                 settingsRepo.updateSettings {
@@ -174,6 +211,61 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 }
             }
         }
+    }
+
+    fun updateWidgetSlot(slotId: String, transform: (WidgetStackSlot) -> WidgetStackSlot) {
+        updateSettings { cfg ->
+            cfg.copy(
+                widgetStacks = cfg.widgetStacks.map { slot ->
+                    if (slot.id == slotId) transform(slot) else slot
+                }
+            )
+        }
+    }
+
+    fun addCustomWidgetToPage(pageIndex: Int, widgetType: CustomWidgetType) {
+        updateSettings { cfg ->
+            val newSlot = WidgetStackSlot(
+                id = "stack_${System.currentTimeMillis()}",
+                pageIndex = pageIndex,
+                stackedCustomWidgets = listOf(widgetType),
+                heightDp = 156,
+                widthFraction = 1.0f,
+                contentScale = 1.0f
+            )
+            cfg.copy(widgetStacks = cfg.widgetStacks + newSlot)
+        }
+        showBanner("${widgetType.displayName} added to Page ${pageIndex + 1}")
+    }
+
+    fun addWidgetSlot(pageIndex: Int) {
+        updateSettings { cfg ->
+            val newSlot = WidgetStackSlot(
+                id = "stack_${System.currentTimeMillis()}",
+                pageIndex = pageIndex,
+                stackedCustomWidgets = listOf(
+                    CustomWidgetType.TIME_DATE,
+                    CustomWidgetType.WEATHER,
+                    CustomWidgetType.BATTERY_MATRIX
+                ),
+                heightDp = 156,
+                widthFraction = 1.0f,
+                contentScale = 1.0f
+            )
+            cfg.copy(widgetStacks = cfg.widgetStacks + newSlot)
+        }
+        showBanner("Widget block added — long-press or use S/M/L/XL to resize")
+    }
+
+    fun removeWidgetSlot(slotId: String) {
+        val target = settings.value.widgetStacks.firstOrNull { it.id == slotId }
+        target?.stackedSystemWidgetIds?.forEach { wid ->
+            widgetHostManager.deleteWidgetId(wid)
+        }
+        updateSettings { cfg ->
+            cfg.copy(widgetStacks = cfg.widgetStacks.filterNot { it.id == slotId })
+        }
+        showBanner("Widget block removed")
     }
 
     fun onAppClicked(appItem: IndexedApp, splitScreen: Boolean = false) {
@@ -210,9 +302,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun setSearchQuery(q: String) {
         _searchQuery.value = q
-        if (q.length >= 2) {
+    }
+
+    fun commitSearchQuery(q: String) {
+        val clean = q.trim()
+        if (clean.length >= 2) {
             viewModelScope.launch {
-                searchEngine.recordQuery(q, settings.value.searchConfig.incognitoMode)
+                searchEngine.recordQuery(clean, settings.value.searchConfig.incognitoMode)
             }
         }
     }
@@ -272,6 +368,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _isAmbientAodVisible.value = false
     }
 
+    fun openNewsSpace() {
+        _isNewsVisible.value = true
+    }
+
+    fun closeNewsSpace() {
+        _isNewsVisible.value = false
+    }
+
+    fun saveQuickNote(text: String) {
+        updateSettings { it.copy(quickNoteText = text) }
+    }
+
     fun toggleDeepFocus() {
         updateSettings { it.copy(deepFocusActive = !it.deepFocusActive) }
     }
@@ -301,8 +409,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun refreshWeather() {
         viewModelScope.launch {
-            val city = settings.value.widgetConfigFor(CustomWidgetType.WEATHER).weatherCity
-            weatherRepo.refreshWeather(city)
+            val wConfig = settings.value.widgetConfigFor(CustomWidgetType.WEATHER)
+            weatherRepo.refreshWeather(wConfig)
         }
     }
 
@@ -383,6 +491,44 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 homePageConfigs = configs
             )
         }
+        showBanner("New Home Page added")
+    }
+
+    fun removeHomePage(pageIndex: Int) {
+        val currentPages = settings.value.homeAppPages
+        if (currentPages.size <= 1 || pageIndex !in currentPages.indices) {
+            showBanner("Cannot remove the only remaining Home Page")
+            return
+        }
+        settings.value.widgetStacks
+            .filter { it.pageIndex == pageIndex }
+            .flatMap { it.stackedSystemWidgetIds }
+            .forEach { wid -> widgetHostManager.deleteWidgetId(wid) }
+
+        updateSettings { cfg ->
+            val pages = cfg.homeAppPages.toMutableList().apply { removeAt(pageIndex) }
+            val pageCfgs = cfg.homePageConfigs.toMutableList()
+            if (pageIndex in pageCfgs.indices) {
+                pageCfgs.removeAt(pageIndex)
+            }
+            val updatedStacks = cfg.widgetStacks
+                .filterNot { it.pageIndex == pageIndex }
+                .map { slot ->
+                    if (slot.pageIndex > pageIndex) slot.copy(pageIndex = slot.pageIndex - 1) else slot
+                }
+            val updatedFolders = cfg.folders
+                .filterNot { it.pageIndex == pageIndex }
+                .map { folder ->
+                    if (folder.pageIndex > pageIndex) folder.copy(pageIndex = folder.pageIndex - 1) else folder
+                }
+            cfg.copy(
+                homeAppPages = pages,
+                homePageConfigs = pageCfgs,
+                widgetStacks = updatedStacks,
+                folders = updatedFolders
+            )
+        }
+        showBanner("Page ${pageIndex + 1} removed")
     }
 
     fun moveHomeApp(pageIndex: Int, packageName: String, delta: Int) {
@@ -506,7 +652,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         when (action) {
             GestureAction.NONE -> Unit
             GestureAction.OPEN_SEARCH -> openSearch()
-            GestureAction.OPEN_DRAWER -> openDrawer()
+            GestureAction.OPEN_DRAWER -> requestAllAppsFeed()
             GestureAction.OPEN_SETTINGS -> openSettings(0)
             GestureAction.OPEN_VAULT -> requestOpenVault()
             GestureAction.TOGGLE_DEEP_FOCUS -> toggleDeepFocus()
