@@ -121,6 +121,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Adaptive frame cap. `frameRateCap == 0` unlocks the panel's highest mode (90/120/144Hz),
+     * while 30/60/120 pins an exact ceiling so low-end GPUs (and battery saver) keep steady frame
+     * pacing instead of oscillating between modes and dropping frames.
+     */
     private fun enableHighRefreshRate() {
         runCatching {
             val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -130,16 +135,31 @@ class MainActivity : ComponentActivity() {
                 windowManager.defaultDisplay
             } ?: return
             val current = display.mode
-            val best = display.supportedModes
-                .filter {
-                    it.physicalWidth == current.physicalWidth &&
-                        it.physicalHeight == current.physicalHeight
-                }
-                .maxByOrNull { it.refreshRate }
+            val cap = viewModel.settings.value.frameRateCap
+            val samePanel = display.supportedModes.filter {
+                it.physicalWidth == current.physicalWidth &&
+                    it.physicalHeight == current.physicalHeight
+            }
+            val best = when {
+                cap <= 0 -> samePanel.maxByOrNull { it.refreshRate }
+                else -> samePanel
+                    .filter { it.refreshRate <= cap + 0.6f }
+                    .maxByOrNull { it.refreshRate }
+                    ?: samePanel.minByOrNull { kotlin.math.abs(it.refreshRate - cap) }
+            }
             if (best != null && best.modeId != current.modeId) {
                 window.attributes = window.attributes.apply {
                     preferredDisplayModeId = best.modeId
                 }
+            }
+            // API 30+: also declare the exact frame-rate ceiling to the compositor.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val target = best?.refreshRate ?: current.refreshRate
+                val ceiling = if (cap <= 0) 0f else cap.toFloat()
+                window.setFrameRate(
+                    if (cap > 0) minOf(target, ceiling) else target,
+                    android.view.WindowManager.LayoutParams.FRAME_RATE_COMPATIBILITY_DEFAULT
+                )
             }
         }
     }
@@ -213,6 +233,10 @@ class MainActivity : ComponentActivity() {
 
             val anyOverlayOpen = isSearchVisible || isSettingsVisible ||
                 isVaultVisible || isAmbientAodVisible || isNewsVisible
+
+            LaunchedEffect(settings.frameRateCap) {
+                enableHighRefreshRate()
+            }
 
             // Immersive full-screen: hide the system status bar (battery, Wi-Fi, notification icons)
             // while still letting the user reveal it with an edge swipe.

@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -137,7 +138,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             evaluateContextAutomation()
         }
         viewModelScope.launch {
-            combine(_isSearchVisible, _searchQuery, allApps, settings) { visible, q, apps, cfg ->
+            // Debounced so a fast typist never fires a full multi-source search per keystroke;
+            // the actual filtering still happens off the main thread inside searchEngine.search().
+            val debouncedQuery = _searchQuery.debounce { q -> if (q.isBlank()) 0L else 110L }
+            combine(_isSearchVisible, debouncedQuery, allApps, settings) { visible, q, apps, cfg ->
                 if (!visible) null else Triple(q, apps, cfg)
             }.collect { payload ->
                 if (payload == null) return@collect

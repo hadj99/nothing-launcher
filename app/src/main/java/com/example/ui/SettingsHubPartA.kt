@@ -486,7 +486,10 @@ private val studioSearchIndex = listOf(
     StudioSettingEntry("Context Auto-Profiles", "Auto switch themes by time, Wi-Fi, Bluetooth or battery", 5, listOf("context", "automation", "profile")),
     StudioSettingEntry("Biometric App Vault", "PIN & fingerprint protected hidden apps", 6, listOf("vault", "hidden", "pin", "biometric")),
     StudioSettingEntry("Backup & Restore", "Export or import the full launcher configuration", 6, listOf("backup", "restore", "export", "import")),
-    StudioSettingEntry("QR Share", "Share your setup as a QR payload", 6, listOf("qr", "share"))
+    StudioSettingEntry("QR Share", "Share your setup as a QR payload", 6, listOf("qr", "share")),
+    StudioSettingEntry("At a Glance Header", "Rotating calendar, weather, steps & battery glance card", 0, listOf("glance", "calendar", "at a glance")),
+    StudioSettingEntry("Frame Rate Cap", "Adaptive or a hard 30 / 60 / 120 FPS ceiling", 4, listOf("fps", "frame rate", "hz", "refresh", "performance")),
+    StudioSettingEntry("Sleep Screen Glyph Animation", "Animated aura, orbit dots & glyph equalizer on the desk clock", 4, listOf("aod", "sleep", "always on", "glyph", "animation"))
 )
 
 @Composable

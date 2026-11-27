@@ -69,32 +69,39 @@ class SettingsRepository(private val context: Context) {
         val storedJson = context.launcherDataStore.data.map { it[keySettingsJson] }.first()
         if (!storedJson.isNullOrBlank()) {
             runCatching { settingsAdapter.fromJson(storedJson) }.getOrNull()?.let { loaded ->
-                val needsV3Migration = !storedJson.contains("\"schemaVersion\":3")
-                val finalSettings = if (needsV3Migration) {
-                    loaded.copy(
-                        schemaVersion = 3,
-                        fullScreenHideStatusBar = true,
-                        grid = loaded.grid.copy(
-                            dockMiniChips = emptyList(),
-                            dockPageCount = 1,
-                            dockSlotsPerPage = 5
-                        ),
-                        gestures = loaded.gestures.copy(
-                            swipeUp = GestureAction.NONE,
-                            swipeDown = if (loaded.gestures.swipeDown == GestureAction.OPEN_SEARCH) {
-                                GestureAction.NONE
-                            } else {
-                                loaded.gestures.swipeDown
-                            },
-                            iconSwipeUp = if (loaded.gestures.iconSwipeUp == GestureAction.OPEN_SEARCH) {
-                                GestureAction.NONE
-                            } else {
-                                loaded.gestures.iconSwipeUp
-                            }
+                val storedVersion = Regex("\"schemaVersion\"\\s*:\\s*(\\d+)")
+                    .find(storedJson)
+                    ?.groupValues?.getOrNull(1)
+                    ?.toIntOrNull()
+                    ?: 0
+                val finalSettings = if (storedVersion < 4) {
+                    var migrated = loaded.copy(schemaVersion = 4)
+                    if (storedVersion < 3) {
+                        // v1.3 defaults: clean 5-slot dock, no accidental search-on-swipe, immersive on.
+                        migrated = migrated.copy(
+                            fullScreenHideStatusBar = true,
+                            grid = migrated.grid.copy(
+                                dockMiniChips = emptyList(),
+                                dockPageCount = 1,
+                                dockSlotsPerPage = 5
+                            ),
+                            gestures = migrated.gestures.copy(
+                                swipeUp = GestureAction.NONE,
+                                swipeDown = if (migrated.gestures.swipeDown == GestureAction.OPEN_SEARCH) {
+                                    GestureAction.NONE
+                                } else {
+                                    migrated.gestures.swipeDown
+                                },
+                                iconSwipeUp = if (migrated.gestures.iconSwipeUp == GestureAction.OPEN_SEARCH) {
+                                    GestureAction.NONE
+                                } else {
+                                    migrated.gestures.iconSwipeUp
+                                }
+                            )
                         )
-                    ).also { migrated ->
-                        persistSettings(migrated)
                     }
+                    persistSettings(migrated)
+                    migrated
                 } else {
                     loaded
                 }

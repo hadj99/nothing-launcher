@@ -541,7 +541,9 @@ data class LauncherSettings(
     val gestures: GestureConfig = GestureConfig(),
     val badgeStyle: BadgeStyle = BadgeStyle.DOT_MATRIX_COUNT,
     val theme: SurfaceThemeConfig = SurfaceThemeConfig(),
-    val schemaVersion: Int = 3,
+    val schemaVersion: Int = 4,
+    /** 0 = adaptive (max supported), otherwise a hard 30 / 60 / 120 FPS cap. */
+    val frameRateCap: Int = 0,
     val fullScreenHideStatusBar: Boolean = true,
     val quickNoteText: String = "Tap to jot down quick ideas, tasks, or reminders...",
     val deepFocusActive: Boolean = false,

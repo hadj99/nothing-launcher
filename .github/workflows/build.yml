@@ -109,11 +109,17 @@ jobs:
         run: |
           NOTES=$(cat <<'EOF'
           ### DotOS Launcher v1.4 (In-Place Update — Rolling Build)
-          Install **DotOS-Launcher-v1.4.apk** directly over v1.0 – v1.3 — same package ID and signing key (`versionCode 6`), so all your apps, layouts, and settings stay intact!
+          Install **DotOS-Launcher-v1.4.apk** directly over v1.0 – v1.3 — same package ID and signing key (`versionCode 7`), so all your apps, layouts, and settings stay intact!
 
           **v1.4 is a rolling build** — your requested updates are folded into this same release tag; re-download the APK to pick up the newest build (versionCode always increases so it installs straight over the previous one).
 
           **New in this v1.4 build:**
+          - **Butter-smooth All Apps (app drawer) on low-end phones** — icon masking/texture baking moved to a single serialized background thread behind a bounded 12 MB `LruCache` (never on the UI thread during scroll), keyed lazy rows with stable click lambdas, and the animated wallpaper is no longer composited behind the opaque feed (zero full-screen overdraw).
+          - **Adaptive frame cap 30 / 60 / 120 FPS** — Settings → Motion → Frame Rate. 30 FPS for budget phones/battery saver, 60 for steady pacing, 120 for high-refresh panels, or adaptive.
+          - **"At a Glance" header** — a rotating context card on Home: calendar event (highlighted 15 minutes before it starts), live weather alert, step goal, and battery state.
+          - **Sleep-screen glyph animations** — breathing aura halo, orbiting accent comets, morphing dot-matrix ring, ticking glyph arcs and a pulsing equalizer on the Always-On desk clock.
+          - **Debounced background search** — typing never blocks a frame; filtering stays on IO with a 110 ms debounce.
+          - **Precompiled baseline profile** for the launcher/drawer/widget hot paths, plus R8 minification.
           - **All Apps scrolling fixed** — per-icon swipe-detectors and the root pin/zoom detector were stealing vertical drags; gestures are now non-consuming and only two-finger pinches are captured, so the app feed scrolls buttery smooth (keyed lazily-recycled rows).
           - **Launcher Settings is now impossible to miss** — a labelled **STUDIO** button sits in the Home top bar, plus a settings gear in the All Apps header.
           - **Android-17 style Settings** — big "Settings" title bar, a full-width rounded **search field** that filters 40+ settings (tap a result to jump straight to its section), icon section rail, collapsible live preview and grouped cards.

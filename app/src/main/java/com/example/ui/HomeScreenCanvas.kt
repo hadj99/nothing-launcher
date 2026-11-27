@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -63,6 +64,7 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -111,7 +113,10 @@ import com.example.themeengine.NothingLiveWallpaperCanvas
 import com.example.themeengine.NothingTypographyEngine
 import com.example.widgethost.InteractiveWidgetStackCard
 import com.example.widgethost.LauncherWidgetHostManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -230,11 +235,17 @@ fun HomeScreenCanvas(
         modifier = modifier.fillMaxSize()
     ) {
         // Live Wallpaper Layer (automatically paused when drawer/search/settings cover home)
-        NothingLiveWallpaperCanvas(
-            theme = settings.theme,
-            deepFocusActive = settings.deepFocusActive,
-            paused = wallpaperPaused || rootPagerState.currentPage == 1
-        )
+        if (rootPagerState.currentPage == 0) {
+            NothingLiveWallpaperCanvas(
+                theme = settings.theme,
+                deepFocusActive = settings.deepFocusActive,
+                paused = wallpaperPaused
+            )
+        } else {
+            // Solid fill instead of an animated canvas: weak GPUs get the whole frame budget
+            // for the All Apps feed, and there is zero full-screen overdraw behind it.
+            Box(modifier = Modifier.fillMaxSize().background(palette.background))
+        }
 
         VerticalPager(
             state = rootPagerState,
@@ -598,6 +609,17 @@ fun HomeScreenCanvas(
                         .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    if (pageIndex == 0) {
+                        DailyGlanceHeader(
+                            settings = settings,
+                            weatherState = weatherState,
+                            stepsToday = stepsToday,
+                            telemetry = telemetry,
+                            onOpenNewsSpace = onOpenNewsSpace,
+                            onOpenSettings = onOpenSettings
+                        )
+                    }
+
                     // Per-page header pill (Page Name + Edit Layout shortcut)
                     Row(
                         modifier = Modifier
@@ -1495,7 +1517,7 @@ private fun FolderGridContent(
                     labelStyle = labelStyle,
                     onClick = { onAppClick(app) },
                     onLongClick = { onAppLongPress(app) },
-                    onSwipeUp = {}
+                    onSwipeUp = null
                 )
             }
         }
@@ -1592,6 +1614,7 @@ private fun AllAppsFeedPage(
         columns = GridCells.Fixed(columns),
         modifier = Modifier
             .fillMaxSize()
+            .background(palette.background)
             .then(
                 if (settings.fullScreenHideStatusBar) Modifier.padding(top = 10.dp)
                 else Modifier.statusBarsPadding()
@@ -1688,7 +1711,7 @@ private fun AllAppsFeedPage(
                                         labelStyle = labelStyle,
                                         onClick = { onAppClick(app) },
                                         onLongClick = { onAppLongPress(app) },
-                                        onSwipeUp = {},
+                                        onSwipeUp = null,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -1719,6 +1742,9 @@ private fun AllAppsFeedPage(
             contentType = { "app_tile" }
         ) { index ->
             val app = visibleApps[index]
+            // Stable click targets: these lambdas are allocated once per app, not per frame.
+            val onTileClick = remember(app) { { onAppClick(app) } }
+            val onTileLongClick = remember(app) { { onAppLongPress(app) } }
             HomeAppTile(
                 app = app,
                 settings = settings,
@@ -1726,9 +1752,9 @@ private fun AllAppsFeedPage(
                 iconVersion = iconVersion,
                 badgeCount = badgeCounts[app.packageName] ?: 0,
                 labelStyle = labelStyle,
-                onClick = { onAppClick(app) },
-                onLongClick = { onAppLongPress(app) },
-                onSwipeUp = {},
+                onClick = onTileClick,
+                onLongClick = onTileLongClick,
+                onSwipeUp = null,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -1917,4 +1943,211 @@ private fun HomeMenuAction(
             textAlign = TextAlign.Center
         )
     }
+}
+
+/**
+ * "At a Glance" — a context-aware card that rotates between what matters right now:
+ * an upcoming calendar event (highlighted 15 minutes before it starts), a live weather alert,
+ * today's step goal, and battery/charging state.
+ */
+@Composable
+private fun DailyGlanceHeader(
+    settings: LauncherSettings,
+    weatherState: WeatherState,
+    stepsToday: Int,
+    telemetry: DeviceTelemetrySnapshot,
+    onOpenNewsSpace: () -> Unit,
+    onOpenSettings: (Int) -> Unit
+) {
+    val palette = LocalNothingPalette.current
+    val context = LocalContext.current
+    var calendarPermissionGranted by remember {
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_CALENDAR
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var nextEvent by remember { mutableStateOf<Pair<String, Long>?>(null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        calendarPermissionGranted = granted
+    }
+
+    LaunchedEffect(calendarPermissionGranted) {
+        if (!calendarPermissionGranted) return@LaunchedEffect
+        nextEvent = withContext(Dispatchers.IO) { queryNextCalendarEvent(context) }
+    }
+
+    // Re-check the calendar every couple of minutes so the 15-minute alert can fire on its own.
+    LaunchedEffect(calendarPermissionGranted) {
+        while (calendarPermissionGranted) {
+            delay(120_000L)
+            nextEvent = withContext(Dispatchers.IO) { queryNextCalendarEvent(context) }
+        }
+    }
+
+    val cards = remember(nextEvent, weatherState, stepsToday, telemetry, calendarPermissionGranted, settings.deepFocusActive) {
+        val list = mutableListOf<GlanceCard>()
+        nextEvent?.let { (title, startMs) ->
+            val minutes = ((startMs - System.currentTimeMillis()) / 60_000L).toInt()
+            if (minutes in -1..720) {
+                list.add(
+                    GlanceCard(
+                        label = if (minutes <= 15) "STARTING SOON" else "NEXT EVENT",
+                        title = title,
+                        detail = if (minutes <= 1) "Now" else "in $minutes min",
+                        accent = minutes <= 15
+                    )
+                )
+            }
+        }
+        weatherState.temperatureC?.let { temp ->
+            val alert = weatherState.weatherCode >= 51
+            list.add(
+                GlanceCard(
+                    label = if (alert) "WEATHER ALERT" else "WEATHER",
+                    title = "${weatherState.conditionText.ifBlank { "Clear" }} · ${temp.roundToInt()}°C",
+                    detail = weatherState.cityLabel.ifBlank { "Local forecast" },
+                    accent = alert
+                )
+            )
+        }
+        list.add(
+            GlanceCard(
+                label = "TODAY",
+                title = "$stepsToday steps",
+                detail = if (stepsToday >= settings.widgetConfigFor(CustomWidgetType.STEP_COUNTER).dailyStepGoal) {
+                    "Goal reached"
+                } else {
+                    "${(settings.widgetConfigFor(CustomWidgetType.STEP_COUNTER).dailyStepGoal - stepsToday).coerceAtLeast(0)} to go"
+                },
+                accent = stepsToday >= settings.widgetConfigFor(CustomWidgetType.STEP_COUNTER).dailyStepGoal
+            )
+        )
+        list.add(
+            GlanceCard(
+                label = if (telemetry.isCharging) "CHARGING" else "BATTERY",
+                title = "${telemetry.batteryPercent}%",
+                detail = when {
+                    telemetry.isCharging -> "Plugged in"
+                    telemetry.batteryPercent <= 20 -> "Battery low — enable saver"
+                    telemetry.isWifiConnected -> telemetry.wifiSsid.ifBlank { "Wi-Fi connected" }
+                    else -> "Mobile data"
+                },
+                accent = telemetry.batteryPercent <= 20 || telemetry.isCharging
+            )
+        )
+        if (list.isEmpty()) {
+            list.add(GlanceCard("DOTOS", "At a glance", "No alerts right now", false))
+        }
+        list
+    }
+
+    var cardIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(cards.size) {
+        if (cards.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(6500L)
+            cardIndex = (cardIndex + 1) % cards.size
+        }
+    }
+    val current = cards[cardIndex % cards.size]
+
+    NothingSurfaceCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                if (!calendarPermissionGranted) {
+                    permissionLauncher.launch(android.Manifest.permission.READ_CALENDAR)
+                } else {
+                    onOpenSettings(5)
+                }
+            },
+        cornerRadius = 18.dp,
+        backgroundColor = palette.surface.copy(alpha = 0.82f),
+        borderColor = if (current.accent) palette.accent.copy(alpha = 0.55f) else palette.borderSubtle
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (current.accent) palette.accent else palette.textSecondary)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = current.label,
+                    fontFamily = NothingTypographyEngine.ndot55Family,
+                    fontSize = 9.sp,
+                    letterSpacing = 1.3.sp,
+                    color = if (current.accent) palette.accent else palette.textSecondary
+                )
+                Text(
+                    text = current.title,
+                    fontFamily = NothingTypographyEngine.ntype82Family,
+                    fontSize = 13.sp,
+                    color = palette.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text = current.detail,
+                fontFamily = NothingTypographyEngine.ntype82Family,
+                fontSize = 10.5.sp,
+                color = palette.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+/** Reads the next calendar event within the next 12 hours, if the user granted READ_CALENDAR. */
+private data class GlanceCard(
+    val label: String,
+    val title: String,
+    val detail: String,
+    val accent: Boolean
+)
+
+private fun queryNextCalendarEvent(context: Context): Pair<String, Long>? {
+    return runCatching {
+        val begin = System.currentTimeMillis()
+        val end = begin + 12L * 60L * 60L * 1000L
+        val uri = android.provider.CalendarContract.Instances.CONTENT_URI.buildUpon()
+            .appendPath(begin.toString())
+            .appendPath(end.toString())
+            .build()
+        val projection = arrayOf(
+            android.provider.CalendarContract.Instances.TITLE,
+            android.provider.CalendarContract.Instances.BEGIN
+        )
+        context.contentResolver.query(
+            uri,
+            projection,
+            null,
+            null,
+            android.provider.CalendarContract.Instances.BEGIN + " ASC"
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val title = cursor.getString(0) ?: "Event"
+                val start = cursor.getLong(1)
+                title to start
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
 }

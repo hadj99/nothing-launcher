@@ -55,6 +55,7 @@ import com.example.contextautomation.DeviceTelemetrySnapshot
 import com.example.contextautomation.LiveNotificationBridge
 import com.example.coreui.DotMatrixDivider
 import com.example.coreui.NothingPillChip
+import com.example.coreui.NothingGroupCard
 import com.example.coreui.NothingSectionHeader
 import com.example.coreui.NothingSliderRow
 import com.example.coreui.NothingSurfaceCard
@@ -301,6 +302,39 @@ internal fun PhysicsAndGesturesTab(
     onUpdateSettings: ((LauncherSettings) -> LauncherSettings) -> Unit
 ) {
     val palette = LocalNothingPalette.current
+
+    NothingGroupCard(
+        title = "Frame Rate & Performance",
+        subtitle = "Pin a steady 30/60/120 FPS ceiling — weak GPUs and battery saver stay smooth"
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(0 to "ADAPTIVE", 30 to "30 FPS", 60 to "60 FPS", 120 to "120 FPS").forEach { (cap, label) ->
+                NothingPillChip(
+                    label = label,
+                    selected = settings.frameRateCap == cap,
+                    onClick = {
+                        onUpdateSettings { it.copy(frameRateCap = cap) }
+                    }
+                )
+            }
+        }
+        Text(
+            text = when (settings.frameRateCap) {
+                30 -> "30 FPS cap active — maximum battery life & the steadiest pacing on low-end phones."
+                60 -> "60 FPS cap active — smooth, predictable frame pacing."
+                120 -> "120 FPS cap active for 90/120/144Hz panels."
+                else -> "Adaptive — uses the panel's highest refresh rate automatically."
+            },
+            fontSize = 11.5.sp,
+            color = palette.textSecondary
+        )
+    }
+
     NothingSectionHeader("Physics & Animation Lab")
 
     NothingSliderRow(

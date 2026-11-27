@@ -233,20 +233,49 @@ private data class BakedIconKey(
     val accentArgb: Int
 )
 
+/**
+ * Bounded LRU of pre-baked masked icon textures.
+ *
+ * Every baked texture is a tiny 136x136 ARGB bitmap (~74 KB), so a 12 MB budget keeps ~160 icons
+ * hot — more than a full screen of the app grid — while never letting bitmap memory grow unbounded
+ * on low-RAM budget devices. `android.util.LruCache` is internally synchronized, so it is safe to
+ * read from the UI thread and fill from the background bake thread.
+ */
 private object BakedIconMemoryCache {
-    val map = ConcurrentHashMap<BakedIconKey, ImageBitmap>(384)
+    private const val MAX_CACHE_KB = 12 * 1024
+
+    private val lru = object : android.util.LruCache<BakedIconKey, ImageBitmap>(MAX_CACHE_KB) {
+        override fun sizeOf(key: BakedIconKey, value: ImageBitmap): Int =
+            ((value.width.toLong() * value.height.toLong() * 4L) / 1024L).toInt().coerceAtLeast(1)
+
+        override fun entryRemoved(evicted: Boolean, key: BakedIconKey, oldValue: ImageBitmap, newValue: ImageBitmap?) {
+            // never recycle: Compose may still hold a frame reference to an evicted texture
+        }
+    }
+
     @Volatile
     var lastStyleSignature: Int = 0
 
     fun ensureStyleGeneration(styleSig: Int) {
         if (lastStyleSignature != styleSig) {
             lastStyleSignature = styleSig
-            if (map.size > 280) {
-                map.clear()
-            }
+            lru.evictAll()
         }
     }
+
+    operator fun get(key: BakedIconKey): ImageBitmap? = lru.get(key)
+
+    fun put(key: BakedIconKey, bitmap: ImageBitmap) {
+        lru.put(key, bitmap)
+    }
 }
+
+/**
+ * Icon baking is deliberately serialized onto ONE background thread: parallel bakes would spike
+ * memory bandwidth and fight the render thread for the CPU exactly when the user is scrolling.
+ */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+internal val IconBakeDispatcher = Dispatchers.Default.limitedParallelism(1)
 
 private val GrayscaleComposeFilter: ColorFilter =
     ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
@@ -398,7 +427,7 @@ suspend fun prewarmMaskedIcons(
     maskConfig: IconMaskConfig,
     deepFocusActive: Boolean,
     accentColor: Color
-) = withContext(Dispatchers.Default) {
+) = withContext(IconBakeDispatcher) {
     if (bitmaps.isEmpty()) return@withContext
     BakedIconMemoryCache.ensureStyleGeneration(maskConfig.hashCode())
     val effectiveShape = maskConfig.shape
@@ -435,8 +464,8 @@ suspend fun prewarmMaskedIcons(
             dimmed = deepFocusActive,
             accentArgb = accentArgb
         )
-        if (!BakedIconMemoryCache.map.containsKey(key)) {
-            BakedIconMemoryCache.map[key] = bakeMaskedIcon(
+        if (BakedIconMemoryCache[key] == null) {
+            BakedIconMemoryCache.put(key, bakeMaskedIcon(
                 src = bmp,
                 maskConfig = maskConfig,
                 effectiveShape = effectiveShape,
@@ -446,7 +475,7 @@ suspend fun prewarmMaskedIcons(
                 bgColorArgb = bgArgb,
                 rimGlowArgb = rimArgb,
                 accentArgb = accentArgb
-            )
+            ))
         }
     }
 }
@@ -508,15 +537,15 @@ fun MaskedAppIcon(
             accentArgb = palette.accent.toArgb()
         )
         BakedIconMemoryCache.ensureStyleGeneration(maskConfig.hashCode())
-        val cached = BakedIconMemoryCache.map[key]
+        val cached = BakedIconMemoryCache[key]
         var bakedBitmap by remember(key) { mutableStateOf(cached) }
         if (bakedBitmap == null && cached != null) {
             bakedBitmap = cached
         }
         if (bakedBitmap == null) {
             LaunchedEffect(key) {
-                val created = withContext(Dispatchers.Default) {
-                    BakedIconMemoryCache.map[key] ?: bakeMaskedIcon(
+                val created = withContext(IconBakeDispatcher) {
+                    BakedIconMemoryCache[key] ?: bakeMaskedIcon(
                         src = iconBitmap,
                         maskConfig = maskConfig,
                         effectiveShape = effectiveShape,
@@ -526,7 +555,7 @@ fun MaskedAppIcon(
                         bgColorArgb = maskBgColor.toArgb(),
                         rimGlowArgb = rimGlowColor.toArgb(),
                         accentArgb = palette.accent.toArgb()
-                    ).also { BakedIconMemoryCache.map[key] = it }
+                    ).also { BakedIconMemoryCache.put(key, it) }
                 }
                 bakedBitmap = created
             }
