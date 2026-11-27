@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -356,24 +357,30 @@ fun DigitalAuraFocusWidget(
     velocity: ScreenTimeVelocity,
     onToggleDeepFocus: () -> Unit,
     onOpenUsageAccess: () -> Unit,
+    animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
     val titleStyle = NothingTypographyEngine.resolveTextStyle(settings.typographyWidgetTitle)
 
     val effectiveVelocity = (velocity.velocityScore * config.auraSensitivity).coerceIn(0.08f, 1f)
-    val pulseDuration = (2600 - (effectiveVelocity * 1700)).toInt().coerceIn(650, 2800)
+    val pulseDuration = (4200 - (effectiveVelocity * 2000)).toInt().coerceIn(1400, 4800)
 
-    val infiniteTransition = rememberInfiniteTransition(label = "digital_aura")
-    val pulsePhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2.0 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = pulseDuration, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "aura_phase"
-    )
+    val animateRing = !animationsPaused && settings.theme.wallpaperAnimationEnabled && !settings.deepFocusActive
+    val pulsePhaseState: State<Float>? = if (animateRing) {
+        val infiniteTransition = rememberInfiniteTransition(label = "digital_aura")
+        infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2.0 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = pulseDuration, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "aura_phase"
+        )
+    } else {
+        null
+    }
 
     Row(
         modifier = modifier
@@ -442,11 +449,12 @@ fun DigitalAuraFocusWidget(
             }
         }
 
-        // Organic pulsating dot-waveform ring
+        // Organic pulsating dot-waveform ring (reads pulsePhaseState strictly inside draw scope -> 0 recompositions)
         Canvas(modifier = Modifier.size(96.dp)) {
+            val pulsePhase = pulsePhaseState?.value ?: 0f
             val c = Offset(size.width / 2f, size.height / 2f)
             val baseR = size.minDimension * 0.34f
-            val dotCount = (20 + (config.dotDensity * 24).toInt()).coerceIn(16, 44)
+            val dotCount = (14 + (config.dotDensity * 14).toInt()).coerceIn(12, 26)
             val rings = 2
             for (ring in 0 until rings) {
                 val ringScale = if (ring == 0) 1f else 0.68f
@@ -508,6 +516,7 @@ fun NothingCustomWidgetCard(
     onRequestBluetoothPermission: () -> Unit = {},
     cardHeightDp: Int = 152,
     contentScale: Float = 1f,
+    animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
@@ -547,7 +556,8 @@ fun NothingCustomWidgetCard(
             CustomWidgetType.TIME_DATE -> TimeDateWidget(
                 config = wConfig,
                 settings = settings,
-                onCycleFormat = onCycleTimeFormat
+                onCycleFormat = onCycleTimeFormat,
+                animationsPaused = animationsPaused
             )
             CustomWidgetType.WEATHER -> WeatherWidget(
                 config = wConfig,
@@ -578,12 +588,14 @@ fun NothingCustomWidgetCard(
                 settings = settings,
                 velocity = screenTimeVelocity,
                 onToggleDeepFocus = onToggleDeepFocus,
-                onOpenUsageAccess = onOpenUsageAccess
+                onOpenUsageAccess = onOpenUsageAccess,
+                animationsPaused = animationsPaused
             )
             CustomWidgetType.MEDIA_VINYL -> MediaVinylWidget(
                 config = wConfig,
                 settings = settings,
-                mediaState = mediaState
+                mediaState = mediaState,
+                animationsPaused = animationsPaused
             )
             CustomWidgetType.BATTERY_MATRIX -> BatteryMatrixWidget(
                 config = wConfig,

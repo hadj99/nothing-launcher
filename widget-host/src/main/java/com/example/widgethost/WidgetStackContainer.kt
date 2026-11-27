@@ -126,6 +126,7 @@ fun InteractiveWidgetStackCard(
     mediaState: ActiveMediaState = ActiveMediaState(),
     hasBluetoothPermission: Boolean = true,
     onRequestBluetoothPermission: () -> Unit = {},
+    animationsPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
@@ -220,7 +221,8 @@ fun InteractiveWidgetStackCard(
                             hasBluetoothPermission = hasBluetoothPermission,
                             onRequestBluetoothPermission = onRequestBluetoothPermission,
                             cardHeightDp = cardHeight,
-                            contentScale = contentScale
+                            contentScale = contentScale,
+                            animationsPaused = animationsPaused || pagerState.currentPage != page
                         )
                     }
 

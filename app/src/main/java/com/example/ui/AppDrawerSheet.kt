@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -120,9 +121,10 @@ fun AppDrawerSheet(
     onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenVault: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    isVisible: Boolean = true
 ) {
-    BackHandler { onDismiss() }
+    BackHandler(enabled = isVisible) { onDismiss() }
     val palette = LocalNothingPalette.current
 
     // Pre-filter, sort, and format labels once outside scroll frames
@@ -177,10 +179,12 @@ fun AppDrawerSheet(
         else preparedApps.filter { it.displayCategory == selectedCategory }
     }
 
+    val solidDrawerBg = remember(palette.drawerBg) { palette.drawerBg.copy(alpha = 1f) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(palette.drawerBg)
+            .background(solidDrawerBg)
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = settings.grid.marginDp.dp)
@@ -401,8 +405,9 @@ private fun DrawerListAppRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
                 onClick = { onAppClick(item.app) },
                 onLongClick = { onAppLongPress(item.app) }
             )
@@ -461,8 +466,9 @@ private fun DrawerGridAppTile(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
                 onClick = { onAppClick(item.app) },
                 onLongClick = { onAppLongPress(item.app) }
             )

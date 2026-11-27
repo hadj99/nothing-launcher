@@ -75,7 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.animationphysics.LauncherPhysicsEngine
-import com.example.animationphysics.LauncherPhysicsEngine.pagerTransition
+import com.example.animationphysics.LauncherPhysicsEngine.pagerTransitionDeferred
 import com.example.animationphysics.NothingHaptics
 import com.example.appindexer.AppIndexerRepository
 import com.example.appindexer.IndexedApp
@@ -507,9 +507,6 @@ fun HomeScreenCanvas(
                     .weight(1f)
                     .fillMaxWidth()
             ) { pageIndex ->
-                val pageOffset = (homePagerState.currentPage - pageIndex) +
-                    homePagerState.currentPageOffsetFraction
-
                 val pageConfig = settings.pageConfigFor(pageIndex)
                 val cols = (pageConfig.columnsOverride ?: settings.grid.homeColumns).coerceIn(2, 12)
                 val rows = (pageConfig.rowsOverride ?: settings.grid.homeRows).coerceIn(2, 12)
@@ -517,8 +514,11 @@ fun HomeScreenCanvas(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pagerTransition(
-                            pageOffset = pageOffset,
+                        .pagerTransitionDeferred(
+                            pageOffsetProvider = {
+                                (homePagerState.currentPage - pageIndex) +
+                                    homePagerState.currentPageOffsetFraction
+                            },
                             style = settings.physics.pageTransition,
                             intensity = settings.physics.pageTransitionIntensity
                         )
@@ -627,6 +627,7 @@ fun HomeScreenCanvas(
                                         mediaState = mediaState,
                                         hasBluetoothPermission = hasBluetoothPermission,
                                         onRequestBluetoothPermission = onRequestBluetoothPermission,
+                                        animationsPaused = wallpaperPaused || homePagerState.currentPage != pageIndex,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -668,6 +669,7 @@ fun HomeScreenCanvas(
                                 mediaState = mediaState,
                                 hasBluetoothPermission = hasBluetoothPermission,
                                 onRequestBluetoothPermission = onRequestBluetoothPermission,
+                                animationsPaused = wallpaperPaused || homePagerState.currentPage != pageIndex,
                                 modifier = singleWidthMod
                             )
                         }

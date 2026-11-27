@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -40,6 +41,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +51,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -58,6 +62,7 @@ import com.example.appindexer.IndexedApp
 import com.example.coreui.DotMatrixDivider
 import com.example.coreui.NothingPillChip
 import com.example.coreui.NothingSurfaceCard
+import com.example.coreui.prewarmMaskedIcons
 import com.example.settingsstore.model.CustomWidgetType
 import com.example.settingsstore.model.GestureAction
 import com.example.settingsstore.model.WidgetStackSlot
@@ -72,10 +77,12 @@ import com.example.ui.LongPressAppMenuDialog
 import com.example.ui.MindfulFrictionCountdownDialog
 import com.example.ui.SettingsHubScreen
 import com.example.universalsearch.UniversalSearchOverlay
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LauncherViewModel by viewModels()
+    private var isActivityResumed by mutableStateOf(true)
 
     private var pendingBindSlotId: String? = null
     private var pendingBindWidgetId: Int = -1
@@ -96,7 +103,44 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        isActivityResumed = true
+        enableHighRefreshRate()
         viewModel.onLauncherResumed()
+    }
+
+    override fun onPause() {
+        isActivityResumed = false
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            enableHighRefreshRate()
+        }
+    }
+
+    private fun enableHighRefreshRate() {
+        runCatching {
+            val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                this.display
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            } ?: return
+            val current = display.mode
+            val best = display.supportedModes
+                .filter {
+                    it.physicalWidth == current.physicalWidth &&
+                        it.physicalHeight == current.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate }
+            if (best != null && best.modeId != current.modeId) {
+                window.attributes = window.attributes.apply {
+                    preferredDisplayModeId = best.modeId
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -130,6 +174,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableHighRefreshRate()
         // Keep system widget host listening across app switches so returning home is instant
         viewModel.widgetHostManager.startListening()
         enableEdgeToEdge()
@@ -189,11 +234,47 @@ class MainActivity : ComponentActivity() {
             var longPressedApp by remember { mutableStateOf<IndexedApp?>(null) }
             var editingStackSlot by remember { mutableStateOf<WidgetStackSlot?>(null) }
 
+            val handleAppClick = remember(viewModel) { { app: IndexedApp -> viewModel.onAppClicked(app) } }
+            val handleAppLongPress = remember { { app: IndexedApp -> longPressedApp = app } }
+            val handleOpenDrawer = remember(viewModel) { { viewModel.openDrawer() } }
+            val handleCloseDrawer = remember(viewModel) { { viewModel.closeDrawer() } }
+            val handleOpenSearch = remember(viewModel) { { viewModel.openSearch() } }
+            val handleOpenSettingsZero = remember(viewModel) { { viewModel.openSettings(0) } }
+            val handleOpenVault = remember(viewModel) { { viewModel.requestOpenVault() } }
+
+            // Pre-warm AppDrawerSheet shortly after first frame so opening the drawer is 0ms instant
+            var drawerWarmReady by remember { mutableStateOf(false) }
+            LaunchedEffect(isDrawerVisible) {
+                if (isDrawerVisible) {
+                    drawerWarmReady = true
+                } else if (!drawerWarmReady) {
+                    delay(350L)
+                    drawerWarmReady = true
+                }
+            }
+
+            val drawerProgressState = animateFloatAsState(
+                targetValue = if (isDrawerVisible) 1f else 0f,
+                animationSpec = tween(durationMillis = if (isDrawerVisible) 155 else 130),
+                label = "drawer_progress"
+            )
+
             DotLauncherTheme(settings = settings) {
                 val palette = LocalNothingPalette.current
 
+                // Pre-bake all installed app icons into flat masked GPU textures in background
+                LaunchedEffect(iconVersion, settings.iconMask, settings.deepFocusActive, palette.accent) {
+                    prewarmMaskedIcons(
+                        bitmaps = viewModel.appIndexer.getAllCachedBitmaps(),
+                        maskConfig = settings.iconMask,
+                        deepFocusActive = settings.deepFocusActive,
+                        accentColor = palette.accent
+                    )
+                }
+
                 ShakeGestureObserver(
-                    enabled = settings.gestures.deviceShake != GestureAction.NONE,
+                    enabled = isActivityResumed && !anyOverlayOpen &&
+                        settings.gestures.deviceShake != GestureAction.NONE,
                     onShakeDetected = {
                         viewModel.executeGestureAction(settings.gestures.deviceShake)
                     }
@@ -220,10 +301,10 @@ class MainActivity : ComponentActivity() {
                         hasBluetoothPermission = hasBtPermission,
                         contextHiddenPackages = contextHiddenPackages,
                         onRequestBluetoothPermission = requestBtPermission,
-                        onAppClick = { viewModel.onAppClicked(it) },
-                        onAppLongPress = { longPressedApp = it },
-                        onOpenDrawer = { viewModel.openDrawer() },
-                        onOpenSearch = { viewModel.openSearch() },
+                        onAppClick = handleAppClick,
+                        onAppLongPress = handleAppLongPress,
+                        onOpenDrawer = handleOpenDrawer,
+                        onOpenSearch = handleOpenSearch,
                         onOpenSettings = { tab -> viewModel.openSettings(tab) },
                         onOpenAmbientAod = { viewModel.openAmbientAod() },
                         onTriggerGesture = { act, cycleDock -> viewModel.executeGestureAction(act, cycleDock) },
@@ -237,41 +318,60 @@ class MainActivity : ComponentActivity() {
                         onMoveHomeApp = { page, pkg, delta -> viewModel.moveHomeApp(page, pkg, delta) },
                         onMoveHomeAppToPage = { fromPage, pkg, toPage -> viewModel.moveHomeAppToPage(fromPage, pkg, toPage) },
                         onOpenStackEditor = { slot -> editingStackSlot = slot },
-                        wallpaperPaused = anyOverlayOpen,
+                        wallpaperPaused = anyOverlayOpen || !isActivityResumed,
                         onUpdateSettings = { viewModel.updateSettings(it) },
                         onUpdateWidgetSlot = { id, tr -> viewModel.updateWidgetSlot(id, tr) },
                         onAddWidgetSlot = { page -> viewModel.addWidgetSlot(page) },
-                        onDeleteWidgetSlot = { id -> viewModel.removeWidgetSlot(id) }
+                        onDeleteWidgetSlot = { id -> viewModel.removeWidgetSlot(id) },
+                        modifier = Modifier.layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            layout(placeable.width, placeable.height) {
+                                val coveredByOpaqueOverlay = drawerProgressState.value >= 0.999f ||
+                                    isSettingsVisible || isVaultVisible || isAmbientAodVisible
+                                if (!coveredByOpaqueOverlay) {
+                                    placeable.placeRelative(0, 0)
+                                }
+                            }
+                        }
                     )
 
-                    // App Drawer Overlay (snappy hardware-friendly transition + preserved scroll state)
-                    AnimatedVisibility(
-                        visible = isDrawerVisible,
-                        enter = slideInVertically(
-                            initialOffsetY = { it / 4 },
-                            animationSpec = tween(durationMillis = 180)
-                        ) + fadeIn(tween(durationMillis = 150)),
-                        exit = slideOutVertically(
-                            targetOffsetY = { it / 4 },
-                            animationSpec = tween(durationMillis = 150)
-                        ) + fadeOut(tween(durationMillis = 130))
-                    ) {
-                        AppDrawerSheet(
-                            apps = allApps,
-                            settings = settings,
-                            appIndexer = viewModel.appIndexer,
-                            iconVersion = iconVersion,
-                            badgeCounts = badgeCounts,
-                            contextHiddenPackages = contextHiddenPackages,
-                            gridState = drawerGridState,
-                            listState = drawerListState,
-                            onAppClick = { viewModel.onAppClicked(it) },
-                            onAppLongPress = { longPressedApp = it },
-                            onOpenSearch = { viewModel.openSearch() },
-                            onOpenSettings = { viewModel.openSettings(0) },
-                            onOpenVault = { viewModel.requestOpenVault() },
-                            onDismiss = { viewModel.closeDrawer() }
-                        )
+                    // App Drawer Overlay — kept warm in memory via placement-gating + pure GPU layer transform
+                    if (drawerWarmReady || isDrawerVisible) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .layout { measurable, constraints ->
+                                    val placeable = measurable.measure(constraints)
+                                    layout(placeable.width, placeable.height) {
+                                        if (drawerProgressState.value > 0.001f) {
+                                            placeable.placeRelative(0, 0)
+                                        }
+                                    }
+                                }
+                                .graphicsLayer {
+                                    val prog = drawerProgressState.value
+                                    alpha = prog
+                                    translationY = (1f - prog) * size.height * 0.14f
+                                }
+                        ) {
+                            AppDrawerSheet(
+                                apps = allApps,
+                                settings = settings,
+                                appIndexer = viewModel.appIndexer,
+                                iconVersion = iconVersion,
+                                badgeCounts = badgeCounts,
+                                contextHiddenPackages = contextHiddenPackages,
+                                gridState = drawerGridState,
+                                listState = drawerListState,
+                                onAppClick = handleAppClick,
+                                onAppLongPress = handleAppLongPress,
+                                onOpenSearch = handleOpenSearch,
+                                onOpenSettings = handleOpenSettingsZero,
+                                onOpenVault = handleOpenVault,
+                                onDismiss = handleCloseDrawer,
+                                isVisible = isDrawerVisible
+                            )
+                        }
                     }
 
                     // Universal Multi-Source Search Overlay

@@ -188,8 +188,17 @@ class AppIndexerRepository(private val context: Context) {
 
             // Pre-warm icons in the background so opening the drawer has 0ms icon decode lag
             scope.launch(Dispatchers.Default) {
+                var addedAny = false
                 for (entity in entities) {
-                    getOrLoadIcon(entity.packageName, entity.activityName)
+                    val key = "${activeIconPackPkg.orEmpty()}:${entity.packageName}"
+                    if (!iconCache.containsKey(key)) {
+                        if (getOrLoadIcon(entity.packageName, entity.activityName) != null) {
+                            addedAny = true
+                        }
+                    }
+                }
+                if (addedAny) {
+                    _iconVersion.value++
                 }
             }
 
@@ -224,6 +233,8 @@ class AppIndexerRepository(private val context: Context) {
         }
         return bitmap
     }
+
+    fun getAllCachedBitmaps(): List<ImageBitmap> = iconCache.values.toList()
 
     fun getCachedIcon(packageName: String, activityName: String = ""): ImageBitmap? {
         val key = "${activeIconPackPkg.orEmpty()}:$packageName"

@@ -1,6 +1,7 @@
 package com.example.themeengine
 
 import android.content.Context
+import android.graphics.Paint
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -15,23 +16,49 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import com.example.settingsstore.model.SurfaceThemeConfig
 import com.example.settingsstore.model.WallpaperMode
 import com.example.settingsstore.model.WallpaperWavePattern
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+private class DotBatchScratch {
+    var lowPts = FloatArray(1024)
+    var midPts = FloatArray(1024)
+    var highPts = FloatArray(1024)
+    var accentPts = FloatArray(256)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeCap = Paint.Cap.ROUND
+        style = Paint.Style.STROKE
+    }
+
+    fun ensureCapacity(maxDots: Int) {
+        val needed = maxDots * 2
+        if (lowPts.size < needed) {
+            lowPts = FloatArray(needed)
+            midPts = FloatArray(needed)
+            highPts = FloatArray(needed)
+        }
+        val accentNeeded = (maxDots / 2).coerceAtLeast(128) * 2
+        if (accentPts.size < accentNeeded) {
+            accentPts = FloatArray(accentNeeded)
+        }
+    }
+}
 
 @Composable
 fun NothingLiveWallpaperCanvas(
@@ -50,13 +77,13 @@ fun NothingLiveWallpaperCanvas(
         return
     }
 
-    var tiltX by remember { mutableFloatStateOf(0f) }
-    var tiltY by remember { mutableFloatStateOf(0f) }
+    val tiltXState = remember { mutableFloatStateOf(0f) }
+    val tiltYState = remember { mutableFloatStateOf(0f) }
 
     DisposableEffect(theme.wallpaperTiltParallax) {
         if (!theme.wallpaperTiltParallax) {
-            tiltX = 0f
-            tiltY = 0f
+            tiltXState.floatValue = 0f
+            tiltYState.floatValue = 0f
             onDispose { }
         } else {
             val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -65,14 +92,18 @@ fun NothingLiveWallpaperCanvas(
                 override fun onSensorChanged(event: SensorEvent) {
                     val nx = (event.values[0] / 9.81f).coerceIn(-1f, 1f)
                     val ny = (event.values[1] / 9.81f).coerceIn(-1f, 1f)
-                    tiltX = tiltX * 0.85f + nx * 0.15f
-                    tiltY = tiltY * 0.85f + ny * 0.15f
+                    val nextX = tiltXState.floatValue * 0.84f + nx * 0.16f
+                    val nextY = tiltYState.floatValue * 0.84f + ny * 0.16f
+                    if (abs(nextX - tiltXState.floatValue) > 0.028f || abs(nextY - tiltYState.floatValue) > 0.028f) {
+                        tiltXState.floatValue = nextX
+                        tiltYState.floatValue = nextY
+                    }
                 }
 
                 override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
             }
             if (accel != null) {
-                sensorManager.registerListener(listener, accel, SensorManager.SENSOR_DELAY_UI)
+                sensorManager.registerListener(listener, accel, SensorManager.SENSOR_DELAY_NORMAL)
             }
             onDispose {
                 sensorManager?.unregisterListener(listener)
@@ -83,9 +114,10 @@ fun NothingLiveWallpaperCanvas(
     val animateActive = theme.wallpaperAnimationEnabled && theme.wallpaperWavePattern != WallpaperWavePattern.STATIC
     val durationMs = (8000f / theme.wallpaperAnimSpeed.coerceIn(0.2f, 3.0f)).roundToInt().coerceIn(1800, 35000)
 
-    val phase = if (animateActive) {
+    // Read animated phase ONLY inside Canvas draw scope — ZERO @Composable recompositions!
+    val phaseState: State<Float>? = if (animateActive) {
         val transition = rememberInfiniteTransition(label = "wallpaper_pulse")
-        val animatedPhase by transition.animateFloat(
+        transition.animateFloat(
             initialValue = 0f,
             targetValue = (Math.PI * 2.0).toFloat(),
             animationSpec = infiniteRepeatable(
@@ -94,13 +126,18 @@ fun NothingLiveWallpaperCanvas(
             ),
             label = "phase"
         )
-        animatedPhase
     } else {
-        0f
+        null
     }
+
+    val scratch = remember { DotBatchScratch() }
 
     Canvas(modifier = modifier.fillMaxSize()) {
         drawRect(color = palette.background)
+
+        val phase = phaseState?.value ?: 0f
+        val tiltX = tiltXState.floatValue
+        val tiltY = tiltYState.floatValue
 
         val parallaxScale = theme.wallpaperParallaxStrength.coerceIn(0f, 2.5f)
         val parallaxOffsetX = tiltX * 26f * parallaxScale
@@ -123,46 +160,99 @@ fun NothingLiveWallpaperCanvas(
         when (theme.wallpaperMode) {
             WallpaperMode.DOT_MATRIX_GRID -> {
                 val density = theme.wallpaperDotDensity.coerceIn(0.25f, 1.0f)
-                val step = (54f - density * 24f).coerceAtLeast(22f)
+                val step = (66f - density * 22f).coerceAtLeast(40f)
                 val cols = (size.width / step).toInt() + 2
                 val rows = (size.height / step).toInt() + 2
-                val dotBaseColor = if (palette.isLightSurface) Color(0xFF1A1A1E) else Color(0xFFFFFFFF)
+                val maxDots = (cols + 1) * (rows + 1)
+                scratch.ensureCapacity(maxDots)
+
                 val centerCol = cols * 0.5f
                 val centerRow = rows * 0.45f
+                val offsetX = parallaxOffsetX * 0.4f
+                val offsetY = parallaxOffsetY * 0.4f
+
+                var lowIdx = 0
+                var midIdx = 0
+                var highIdx = 0
+                var accIdx = 0
+
+                val lowArr = scratch.lowPts
+                val midArr = scratch.midPts
+                val highArr = scratch.highPts
+                val accArr = scratch.accentPts
 
                 for (r in 0..rows) {
+                    val y = r * step + offsetY
                     for (c in 0..cols) {
-                        val x = c * step + (parallaxOffsetX * 0.4f)
-                        val y = r * step + (parallaxOffsetY * 0.4f)
-                        val rawWave = when (theme.wallpaperWavePattern) {
-                            WallpaperWavePattern.DIAGONAL_WAVE -> sin((c * 0.35f) + (r * 0.25f) + phase)
-                            WallpaperWavePattern.RADIAL_RIPPLE -> {
-                                val dist = hypot((c - centerCol).toDouble(), (r - centerRow).toDouble()).toFloat()
-                                sin(dist * 0.65f - phase * 2f)
-                            }
-                            WallpaperWavePattern.MATRIX_RAIN -> sin((r * 0.45f) - phase * 2f + (c % 5) * 1.1f)
-                            WallpaperWavePattern.BREATHING_PULSE -> sin(phase)
-                            WallpaperWavePattern.STATIC -> 0f
-                        }
-                        val wave = rawWave * intensity
-                        val alpha = ((0.045f + ((wave + 1f) * 0.045f)) * brightness).coerceIn(0.015f, 0.45f)
+                        val x = c * step + offsetX
                         val accentThreshold = when {
                             accentFreq <= 0.05f -> false
                             accentFreq >= 1.5f -> (c % 6 == 2 && r % 7 == 3)
                             accentFreq >= 0.7f -> (c % 9 == 4 && r % 11 == 5)
                             else -> (c % 13 == 6 && r % 15 == 7)
                         }
-                        val isGlyphNode = accentThreshold && !deepFocusActive
-                        drawCircle(
-                            color = if (isGlyphNode) {
-                                palette.accent.copy(alpha = (0.38f * brightness).coerceIn(0.1f, 0.9f))
-                            } else {
-                                dotBaseColor.copy(alpha = alpha)
-                            },
-                            radius = (if (isGlyphNode) 3.2f else (1.5f + (wave + 1f) * 0.65f)) * sizeScale,
-                            center = Offset(x, y)
-                        )
+                        if (accentThreshold && !deepFocusActive && accIdx + 1 < accArr.size) {
+                            accArr[accIdx++] = x
+                            accArr[accIdx++] = y
+                            continue
+                        }
+
+                        val rawWave = when (theme.wallpaperWavePattern) {
+                            WallpaperWavePattern.DIAGONAL_WAVE -> sin((c * 0.35f) + (r * 0.25f) + phase)
+                            WallpaperWavePattern.RADIAL_RIPPLE -> {
+                                val dc = c - centerCol
+                                val dr = r - centerRow
+                                sin(hypot(dc, dr) * 0.65f - phase * 2f)
+                            }
+                            WallpaperWavePattern.MATRIX_RAIN -> sin((r * 0.45f) - phase * 2f + (c % 5) * 1.1f)
+                            WallpaperWavePattern.BREATHING_PULSE -> sin(phase)
+                            WallpaperWavePattern.STATIC -> 0f
+                        }
+                        val wave = rawWave * intensity
+                        when {
+                            wave > 0.35f -> {
+                                highArr[highIdx++] = x
+                                highArr[highIdx++] = y
+                            }
+                            wave > -0.35f -> {
+                                midArr[midIdx++] = x
+                                midArr[midIdx++] = y
+                            }
+                            else -> {
+                                lowArr[lowIdx++] = x
+                                lowArr[lowIdx++] = y
+                            }
+                        }
                     }
+                }
+
+                // 4 batched native drawPoints calls instead of ~2,000 individual drawCircle JNI calls!
+                val nc = drawContext.canvas.nativeCanvas
+                val baseRgb = if (palette.isLightSurface) 0x001A1A1E else 0x00FFFFFF
+                val p = scratch.paint
+
+                if (lowIdx > 0) {
+                    val a = ((0.045f * brightness).coerceIn(0.015f, 0.35f) * 255f).toInt()
+                    p.color = (a shl 24) or baseRgb
+                    p.strokeWidth = 3.2f * sizeScale
+                    nc.drawPoints(lowArr, 0, lowIdx, p)
+                }
+                if (midIdx > 0) {
+                    val a = ((0.09f * brightness).coerceIn(0.025f, 0.42f) * 255f).toInt()
+                    p.color = (a shl 24) or baseRgb
+                    p.strokeWidth = 4.2f * sizeScale
+                    nc.drawPoints(midArr, 0, midIdx, p)
+                }
+                if (highIdx > 0) {
+                    val a = ((0.14f * brightness).coerceIn(0.035f, 0.48f) * 255f).toInt()
+                    p.color = (a shl 24) or baseRgb
+                    p.strokeWidth = 5.2f * sizeScale
+                    nc.drawPoints(highArr, 0, highIdx, p)
+                }
+                if (accIdx > 0) {
+                    p.color = palette.accent.copy(alpha = (0.42f * brightness).coerceIn(0.1f, 0.9f)).toArgb()
+                    p.strokeWidth = 6.4f * sizeScale
+                    nc.drawPoints(accArr, 0, accIdx, p)
                 }
             }
 
@@ -229,4 +319,3 @@ fun NothingLiveWallpaperCanvas(
         }
     }
 }
-
