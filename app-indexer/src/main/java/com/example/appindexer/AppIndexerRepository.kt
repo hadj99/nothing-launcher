@@ -2,9 +2,10 @@ package com.example.appindexer
 
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
-import android.content.ComponentName
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
@@ -15,33 +16,59 @@ import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
-import android.util.LruCache
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.example.settingsstore.db.AppIndexEntity
 import com.example.settingsstore.db.LauncherDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import java.util.Calendar
+import java.util.concurrent.ConcurrentHashMap
 
+@Stable
 class AppIndexerRepository(private val context: Context) {
     private val pm = context.packageManager
     private val database = LauncherDatabase.getInstance(context)
     private val appIndexDao = database.appIndexDao()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val iconCache = object : LruCache<String, ImageBitmap>(320) {}
+    // Lock-free in-memory bitmap cache — never evicts normal app counts, zero main-thread jank.
+    private val iconCache = ConcurrentHashMap<String, ImageBitmap>(256)
+    private val pendingIconLoads = ConcurrentHashMap.newKeySet<String>()
+    private val refreshMutex = Mutex()
+
+    @Volatile
     private var activeIconPackPkg: String? = null
     private var iconPackMapping: Map<String, String> = emptyMap()
+
+    @Volatile
+    private var lastUsageRefreshMs: Long = 0L
+
+    @Volatile
+    private var packageMonitorRegistered: Boolean = false
+    private var iconNotifyJob: Job? = null
 
     private val _iconVersion = MutableStateFlow(0)
     val iconVersion: StateFlow<Int> = _iconVersion.asStateFlow()
@@ -52,8 +79,10 @@ class AppIndexerRepository(private val context: Context) {
     private val _shortcutsByPackage = MutableStateFlow<Map<String, List<AppShortcutInfo>>>(emptyMap())
     val shortcutsByPackage: StateFlow<Map<String, List<AppShortcutInfo>>> = _shortcutsByPackage.asStateFlow()
 
-    val allApps: Flow<List<IndexedApp>> = appIndexDao.observeAllApps().map { entities ->
-        val shortcutMap = _shortcutsByPackage.value
+    val allApps: Flow<List<IndexedApp>> = combine(
+        appIndexDao.observeAllApps().distinctUntilChanged(),
+        _shortcutsByPackage
+    ) { entities, shortcutMap ->
         entities.map { entity ->
             IndexedApp(
                 packageName = entity.packageName,
@@ -67,90 +96,171 @@ class AppIndexerRepository(private val context: Context) {
                 shortcuts = shortcutMap[entity.packageName].orEmpty()
             )
         }
-    }
+    }.distinctUntilChanged()
 
-    val mostUsedApps: Flow<List<IndexedApp>> = appIndexDao.observeMostUsed(8).map { entities ->
-        entities.map { entity ->
-            IndexedApp(
-                packageName = entity.packageName,
-                activityName = entity.activityName,
-                label = entity.label,
-                category = entity.category,
-                launchCount = entity.launchCount,
-                lastUsedTimestamp = entity.lastUsedTimestamp,
-                dailyMinutesUsed = entity.dailyMinutesUsed,
-                isSystemApp = entity.isSystemApp
-            )
+    val mostUsedApps: Flow<List<IndexedApp>> = appIndexDao.observeMostUsed(8)
+        .distinctUntilChanged()
+        .map { entities ->
+            entities.map { entity ->
+                IndexedApp(
+                    packageName = entity.packageName,
+                    activityName = entity.activityName,
+                    label = entity.label,
+                    category = entity.category,
+                    launchCount = entity.launchCount,
+                    lastUsedTimestamp = entity.lastUsedTimestamp,
+                    dailyMinutesUsed = entity.dailyMinutesUsed,
+                    isSystemApp = entity.isSystemApp
+                )
+            }
+        }
+        .distinctUntilChanged()
+
+    fun startPackageMonitor() {
+        if (packageMonitorRegistered) return
+        packageMonitorRegistered = true
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addDataScheme("package")
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val pkg = intent?.data?.schemeSpecificPart
+                if (!pkg.isNullOrBlank()) {
+                    iconCache.remove("${activeIconPackPkg.orEmpty()}:$pkg")
+                }
+                scope.launch {
+                    refreshInstalledApps(activeIconPackPkg)
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, filter)
         }
     }
 
     suspend fun refreshInstalledApps(iconPackPackage: String? = activeIconPackPkg) = withContext(Dispatchers.IO) {
-        if (iconPackPackage != activeIconPackPkg) {
-            loadIconPackMapping(iconPackPackage)
-        }
+        refreshMutex.withLock {
+            if (iconPackPackage != activeIconPackPkg) {
+                loadIconPackMapping(iconPackPackage)
+            }
 
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-        val resolveInfos = pm.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
-        val selfPkg = context.packageName
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val resolveInfos = pm.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
+            val selfPkg = context.packageName
 
-        val entities = mutableListOf<AppIndexEntity>()
-        val activePkgs = mutableListOf<String>()
+            val entities = ArrayList<AppIndexEntity>(resolveInfos.size)
+            val seenPkgs = HashSet<String>(resolveInfos.size)
+            val activePkgs = ArrayList<String>(resolveInfos.size)
 
-        for (ri in resolveInfos) {
-            val pkg = ri.activityInfo.packageName ?: continue
-            if (pkg == selfPkg) continue
-            if (activePkgs.contains(pkg)) continue
-            activePkgs.add(pkg)
+            for (ri in resolveInfos) {
+                val pkg = ri.activityInfo.packageName ?: continue
+                if (pkg == selfPkg || !seenPkgs.add(pkg)) continue
+                activePkgs.add(pkg)
 
-            val label = ri.loadLabel(pm)?.toString()?.trim().orEmpty().ifEmpty { pkg }
-            val appInfo = ri.activityInfo.applicationInfo
-            val category = resolveAppCategory(pkg, label, appInfo)
-            val isSys = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                val label = ri.loadLabel(pm)?.toString()?.trim().orEmpty().ifEmpty { pkg }
+                val appInfo = ri.activityInfo.applicationInfo
+                val category = resolveAppCategory(pkg, label, appInfo)
+                val isSys = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
 
-            entities.add(
-                AppIndexEntity(
-                    packageName = pkg,
-                    activityName = ri.activityInfo.name,
-                    label = label,
-                    category = category,
-                    isSystemApp = isSys
+                entities.add(
+                    AppIndexEntity(
+                        packageName = pkg,
+                        activityName = ri.activityInfo.name,
+                        label = label,
+                        category = category,
+                        isSystemApp = isSys
+                    )
                 )
-            )
-            // Pre-cache bitmap off main thread for sub-16ms scrolling
-            getOrLoadIcon(pkg, ri.activityInfo.name)
-        }
+            }
 
-        if (entities.isNotEmpty()) {
-            appIndexDao.upsertApps(entities)
-            appIndexDao.pruneRemoved(activePkgs)
-        }
+            if (entities.isNotEmpty()) {
+                // Diff-sync: preserves launchCount & dailyMinutesUsed and skips DB writes when unchanged!
+                appIndexDao.syncInstalledApps(entities)
+            }
 
-        refreshUsageStats()
-        refreshShortcuts(activePkgs)
+            // Pre-warm icons in the background so opening the drawer has 0ms icon decode lag
+            scope.launch(Dispatchers.Default) {
+                for (entity in entities) {
+                    getOrLoadIcon(entity.packageName, entity.activityName)
+                }
+            }
+
+            refreshUsageStats(force = true)
+            if (_shortcutsByPackage.value.isEmpty()) {
+                refreshShortcuts(activePkgs)
+            }
+        }
+    }
+
+    @Composable
+    fun rememberAppIcon(
+        packageName: String,
+        activityName: String = "",
+        iconVersion: Int = 0
+    ): ImageBitmap? {
+        val key = "${activeIconPackPkg.orEmpty()}:$packageName"
+        val cached = iconCache[key]
+        var bitmap by remember(packageName, iconVersion) { mutableStateOf(cached) }
+        if (bitmap == null && cached != null) {
+            bitmap = cached
+        }
+        if (bitmap == null) {
+            LaunchedEffect(packageName, iconVersion) {
+                val loaded = withContext(Dispatchers.IO) {
+                    getOrLoadIcon(packageName, activityName)
+                }
+                if (loaded != null) {
+                    bitmap = loaded
+                }
+            }
+        }
+        return bitmap
     }
 
     fun getCachedIcon(packageName: String, activityName: String = ""): ImageBitmap? {
         val key = "${activeIconPackPkg.orEmpty()}:$packageName"
-        iconCache.get(key)?.let { return it }
-        scope.launch {
-            getOrLoadIcon(packageName, activityName)
-            _iconVersion.value++
+        iconCache[key]?.let { return it }
+        if (pendingIconLoads.add(key)) {
+            scope.launch {
+                try {
+                    val loaded = getOrLoadIcon(packageName, activityName)
+                    if (loaded != null) {
+                        scheduleCoalescedIconBump()
+                    }
+                } finally {
+                    pendingIconLoads.remove(key)
+                }
+            }
         }
         return null
     }
 
+    private fun scheduleCoalescedIconBump() {
+        if (iconNotifyJob?.isActive == true) return
+        iconNotifyJob = scope.launch {
+            delay(220L)
+            _iconVersion.value++
+        }
+    }
+
     private fun getOrLoadIcon(packageName: String, activityName: String): ImageBitmap? {
         val cacheKey = "${activeIconPackPkg.orEmpty()}:$packageName"
-        iconCache.get(cacheKey)?.let { return it }
+        iconCache[cacheKey]?.let { return it }
 
         val drawable: Drawable? = tryLoadFromIconPack(packageName, activityName)
             ?: runCatching { pm.getApplicationIcon(packageName) }.getOrNull()
 
-        val bitmap = drawable?.let { drawableToImageBitmap(it, 144) }
+        val bitmap = drawable?.let { drawableToImageBitmap(it, 132) }
         if (bitmap != null) {
-            iconCache.put(cacheKey, bitmap)
+            iconCache[cacheKey] = bitmap
         }
         return bitmap
     }
@@ -169,7 +279,7 @@ class AppIndexerRepository(private val context: Context) {
 
     fun loadIconPackMapping(packPkg: String?) {
         activeIconPackPkg = packPkg
-        iconCache.evictAll()
+        iconCache.clear()
         if (packPkg.isNullOrBlank()) {
             iconPackMapping = emptyMap()
             _iconVersion.value++
@@ -221,10 +331,18 @@ class AppIndexerRepository(private val context: Context) {
         return result
     }
 
-    suspend fun refreshUsageStats() = withContext(Dispatchers.IO) {
+    suspend fun refreshUsageStats(force: Boolean = false) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastUsageRefreshMs) < 300_000L) {
+            return@withContext
+        }
+        lastUsageRefreshMs = now
+
         val granted = hasUsageStatsPermission(context)
         if (!granted) {
-            _screenTimeVelocity.value = _screenTimeVelocity.value.copy(usagePermissionGranted = false)
+            if (_screenTimeVelocity.value.usagePermissionGranted) {
+                _screenTimeVelocity.value = _screenTimeVelocity.value.copy(usagePermissionGranted = false)
+            }
             return@withContext
         }
 
@@ -236,20 +354,26 @@ class AppIndexerRepository(private val context: Context) {
             set(Calendar.MILLISECOND, 0)
         }
         val startOfDay = cal.timeInMillis
-        val now = System.currentTimeMillis()
         val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startOfDay, now).orEmpty()
 
         var totalMillis = 0L
+        val minutesByPkg = HashMap<String, Int>()
+        val lastUsedByPkg = HashMap<String, Long>()
         for (s in stats) {
             val fg = s.totalTimeInForeground
             if (fg > 0L) {
                 totalMillis += fg
                 val mins = (fg / 60_000L).toInt()
-                appIndexDao.updateDailyMinutes(s.packageName, mins)
+                val prev = minutesByPkg[s.packageName] ?: 0
+                if (mins > prev) minutesByPkg[s.packageName] = mins
                 if (s.lastTimeUsed > startOfDay) {
-                    appIndexDao.recordLaunch(s.packageName, s.lastTimeUsed)
+                    val prevTs = lastUsedByPkg[s.packageName] ?: 0L
+                    if (s.lastTimeUsed > prevTs) lastUsedByPkg[s.packageName] = s.lastTimeUsed
                 }
             }
+        }
+        if (minutesByPkg.isNotEmpty() || lastUsedByPkg.isNotEmpty()) {
+            appIndexDao.applyUsageUpdates(minutesByPkg, lastUsedByPkg)
         }
 
         val recentHourStats = usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, now - 3_600_000L, now).orEmpty()

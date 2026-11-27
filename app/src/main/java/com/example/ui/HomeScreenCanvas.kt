@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -11,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +47,7 @@ import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
@@ -141,6 +144,11 @@ fun HomeScreenCanvas(
     onMoveHomeApp: (Int, String, Int) -> Unit,
     onMoveHomeAppToPage: (Int, String, Int) -> Unit,
     onOpenStackEditor: (WidgetStackSlot) -> Unit,
+    wallpaperPaused: Boolean = false,
+    onUpdateSettings: ((LauncherSettings) -> LauncherSettings) -> Unit = {},
+    onUpdateWidgetSlot: (String, (WidgetStackSlot) -> WidgetStackSlot) -> Unit = { _, _ -> },
+    onAddWidgetSlot: (Int) -> Unit = {},
+    onDeleteWidgetSlot: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
@@ -156,9 +164,21 @@ fun HomeScreenCanvas(
     var inlineExpandedFolderId by remember { mutableStateOf<String?>(null) }
     var editLayoutMode by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = editLayoutMode) {
+        editLayoutMode = false
+    }
+
+    val enterEditMode = {
+        if (!editLayoutMode) {
+            NothingHaptics.performConfirm(context, settings.physics)
+            editLayoutMode = true
+        }
+    }
+
     val appMap = remember(allApps) { allApps.associateBy { it.packageName } }
-    val homeLabelStyle = remember(settings.typographyHome) {
+    val homeLabelStyle = remember(settings.typographyHome, palette.textPrimary) {
         NothingTypographyEngine.resolveTextStyle(settings.typographyHome)
+            .copy(color = palette.textPrimary)
     }
 
     val cycleDock = {
@@ -172,8 +192,14 @@ fun HomeScreenCanvas(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(settings.gestures) {
+            .pointerInput(settings.gestures, editLayoutMode) {
                 detectTapGestures(
+                    onTap = {
+                        if (editLayoutMode) editLayoutMode = false
+                    },
+                    onLongPress = {
+                        enterEditMode()
+                    },
                     onDoubleTap = {
                         NothingHaptics.performConfirm(context, settings.physics)
                         onTriggerGesture(settings.gestures.doubleTap, cycleDock)
@@ -204,10 +230,11 @@ fun HomeScreenCanvas(
                 )
             }
     ) {
-        // Live Wallpaper Layer
+        // Live Wallpaper Layer (automatically paused when drawer/search/settings cover home)
         NothingLiveWallpaperCanvas(
             theme = settings.theme,
-            deepFocusActive = settings.deepFocusActive
+            deepFocusActive = settings.deepFocusActive,
+            paused = wallpaperPaused
         )
 
         Column(
@@ -294,6 +321,185 @@ fun HomeScreenCanvas(
                 )
             }
 
+            // Quick Home & Widget Customize Toolbar (shown on long-press or Edit button)
+            AnimatedVisibility(visible = editLayoutMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = settings.grid.marginDp.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(palette.surface.copy(alpha = 0.96f))
+                        .border(1.dp, palette.accent.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Add Widget Block on current page
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.accent)
+                            .clickable { onAddWidgetSlot(homePagerState.currentPage) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "WIDGET",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 10.sp,
+                            color = Color.White
+                        )
+                    }
+
+                    // Columns - / +
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.background.copy(alpha = 0.65f))
+                            .border(1.dp, palette.borderSubtle, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Remove,
+                            "Fewer Columns",
+                            tint = palette.textPrimary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable {
+                                    onUpdateSettings { cfg ->
+                                        cfg.copy(
+                                            grid = cfg.grid.copy(
+                                                homeColumns = (cfg.grid.homeColumns - 1).coerceIn(3, 7)
+                                            )
+                                        )
+                                    }
+                                }
+                        )
+                        Text(
+                            text = "${settings.grid.homeColumns} COL",
+                            fontFamily = NothingTypographyEngine.ntype82Family,
+                            fontSize = 10.sp,
+                            color = palette.textPrimary
+                        )
+                        Icon(
+                            Icons.Rounded.Add,
+                            "More Columns",
+                            tint = palette.textPrimary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable {
+                                    onUpdateSettings { cfg ->
+                                        cfg.copy(
+                                            grid = cfg.grid.copy(
+                                                homeColumns = (cfg.grid.homeColumns + 1).coerceIn(3, 7)
+                                            )
+                                        )
+                                    }
+                                }
+                        )
+                    }
+
+                    // Icon Scale - / +
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.background.copy(alpha = 0.65f))
+                            .border(1.dp, palette.borderSubtle, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Remove,
+                            "Smaller Icons",
+                            tint = palette.textPrimary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable {
+                                    onUpdateSettings { cfg ->
+                                        cfg.copy(
+                                            iconMask = cfg.iconMask.copy(
+                                                iconScale = (cfg.iconMask.iconScale - 0.08f).coerceIn(0.7f, 1.35f)
+                                            )
+                                        )
+                                    }
+                                }
+                        )
+                        Text(
+                            text = "ICON ${(settings.iconMask.iconScale * 100).toInt()}%",
+                            fontFamily = NothingTypographyEngine.ntype82Family,
+                            fontSize = 10.sp,
+                            color = palette.textPrimary
+                        )
+                        Icon(
+                            Icons.Rounded.Add,
+                            "Larger Icons",
+                            tint = palette.textPrimary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable {
+                                    onUpdateSettings { cfg ->
+                                        cfg.copy(
+                                            iconMask = cfg.iconMask.copy(
+                                                iconScale = (cfg.iconMask.iconScale + 0.08f).coerceIn(0.7f, 1.35f)
+                                            )
+                                        )
+                                    }
+                                }
+                        )
+                    }
+
+                    // Toggle Most Used Section
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                if (settings.grid.showMostUsedSection) palette.accent.copy(alpha = 0.22f)
+                                else palette.background.copy(alpha = 0.65f)
+                            )
+                            .border(
+                                1.dp,
+                                if (settings.grid.showMostUsedSection) palette.accent else palette.borderSubtle,
+                                RoundedCornerShape(999.dp)
+                            )
+                            .clickable {
+                                onUpdateSettings { cfg ->
+                                    cfg.copy(grid = cfg.grid.copy(showMostUsedSection = !cfg.grid.showMostUsedSection))
+                                }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (settings.grid.showMostUsedSection) "MOST USED: ON" else "MOST USED: OFF",
+                            fontFamily = NothingTypographyEngine.ntype82Family,
+                            fontSize = 10.sp,
+                            color = if (settings.grid.showMostUsedSection) palette.accent else palette.textSecondary
+                        )
+                    }
+
+                    // Done chip
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.textPrimary)
+                            .clickable { editLayoutMode = false }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "DONE",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 10.sp,
+                            color = palette.background
+                        )
+                    }
+                }
+            }
+
             // Main Multi-Page Home Pager
             HorizontalPager(
                 state = homePagerState,
@@ -316,13 +522,32 @@ fun HomeScreenCanvas(
                             style = settings.physics.pageTransition,
                             intensity = settings.physics.pageTransitionIntensity
                         )
+                        .pointerInput(editLayoutMode, settings.gestures) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (editLayoutMode) editLayoutMode = false
+                                },
+                                onLongPress = {
+                                    enterEditMode()
+                                },
+                                onDoubleTap = {
+                                    NothingHaptics.performConfirm(context, settings.physics)
+                                    onTriggerGesture(settings.gestures.doubleTap, cycleDock)
+                                }
+                            )
+                        }
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // Per-page header pill (Page Name + Edit Layout shortcut)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = { if (editLayoutMode) editLayoutMode = false },
+                                onLongClick = { enterEditMode() }
+                            ),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -333,43 +558,119 @@ fun HomeScreenCanvas(
                             letterSpacing = 1.2.sp,
                             color = palette.textSecondary
                         )
-                        if (editLayoutMode) {
-                            Text(
-                                text = "EDITING GRID  •  TAP DONE ABOVE",
-                                fontFamily = NothingTypographyEngine.ndot55Family,
-                                fontSize = 10.sp,
-                                color = palette.accent
-                            )
-                        }
+                        Text(
+                            text = if (editLayoutMode) "RESIZE WIDGETS BELOW  •  TAP DONE" else "HOLD TO CUSTOMIZE",
+                            fontFamily = NothingTypographyEngine.ndot55Family,
+                            fontSize = 9.5.sp,
+                            color = if (editLayoutMode) palette.accent else palette.textSecondary.copy(alpha = 0.65f),
+                            modifier = Modifier.clickable { editLayoutMode = !editLayoutMode }
+                        )
                     }
 
-                    // Widget Stack for this page (if configured)
-                    val pageSlots = settings.widgetStacks.filter { it.pageIndex == pageIndex }
-                    pageSlots.forEach { slot ->
-                        InteractiveWidgetStackCard(
-                            slot = slot,
-                            settings = settings,
-                            widgetHostManager = widgetHostManager,
-                            stepsToday = stepsToday,
-                            stepSensorAvailable = stepSensorAvailable,
-                            hasStepPermission = hasStepPermission,
-                            stepHistory = stepHistory,
-                            weatherState = weatherState,
-                            telemetry = telemetry,
-                            screenTimeVelocity = screenTimeVelocity,
-                            contextEngine = contextEngine,
-                            onRequestStepSync = onRequestStepSync,
-                            onCycleTimeFormat = onCycleTimeFormat,
-                            onRefreshWeather = onRefreshWeather,
-                            onCycleYearMode = onCycleYearMode,
-                            onToggleDeepFocus = onToggleDeepFocus,
-                            onOpenUsageAccess = onOpenUsageAccess,
-                            onOpenWidgetSettings = { onOpenSettings(5) },
-                            onOpenStackEditor = onOpenStackEditor,
-                            mediaState = mediaState,
-                            hasBluetoothPermission = hasBluetoothPermission,
-                            onRequestBluetoothPermission = onRequestBluetoothPermission
-                        )
+                    // Widget Stack(s) for this page — supports Full-Width or Half-Width side-by-side!
+                    val pageSlots = remember(settings.widgetStacks, pageIndex) {
+                        settings.widgetStacks.filter { it.pageIndex == pageIndex }
+                    }
+                    val slotRows = remember(pageSlots) {
+                        val grouped = mutableListOf<List<WidgetStackSlot>>()
+                        var i = 0
+                        while (i < pageSlots.size) {
+                            val current = pageSlots[i]
+                            if (current.widthFraction <= 0.55f &&
+                                i + 1 < pageSlots.size &&
+                                pageSlots[i + 1].widthFraction <= 0.55f
+                            ) {
+                                grouped.add(listOf(current, pageSlots[i + 1]))
+                                i += 2
+                            } else {
+                                grouped.add(listOf(current))
+                                i += 1
+                            }
+                        }
+                        grouped
+                    }
+                    slotRows.forEach { rowSlots ->
+                        if (rowSlots.size == 2) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                rowSlots.forEach { slot ->
+                                    InteractiveWidgetStackCard(
+                                        slot = slot,
+                                        settings = settings,
+                                        widgetHostManager = widgetHostManager,
+                                        stepsToday = stepsToday,
+                                        stepSensorAvailable = stepSensorAvailable,
+                                        hasStepPermission = hasStepPermission,
+                                        stepHistory = stepHistory,
+                                        weatherState = weatherState,
+                                        telemetry = telemetry,
+                                        screenTimeVelocity = screenTimeVelocity,
+                                        contextEngine = contextEngine,
+                                        onRequestStepSync = onRequestStepSync,
+                                        onCycleTimeFormat = onCycleTimeFormat,
+                                        onRefreshWeather = onRefreshWeather,
+                                        onCycleYearMode = onCycleYearMode,
+                                        onToggleDeepFocus = onToggleDeepFocus,
+                                        onOpenUsageAccess = onOpenUsageAccess,
+                                        onOpenWidgetSettings = { onOpenSettings(5) },
+                                        onOpenStackEditor = onOpenStackEditor,
+                                        editMode = editLayoutMode,
+                                        onLongPressSlot = { s ->
+                                            enterEditMode()
+                                            onOpenStackEditor(s)
+                                        },
+                                        onUpdateSlot = { tr -> onUpdateWidgetSlot(slot.id, tr) },
+                                        onDeleteSlot = { onDeleteWidgetSlot(slot.id) },
+                                        mediaState = mediaState,
+                                        hasBluetoothPermission = hasBluetoothPermission,
+                                        onRequestBluetoothPermission = onRequestBluetoothPermission,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        } else {
+                            val slot = rowSlots.first()
+                            val singleWidthMod = if (slot.widthFraction <= 0.55f) {
+                                Modifier.fillMaxWidth(0.5f)
+                            } else {
+                                Modifier.fillMaxWidth()
+                            }
+                            InteractiveWidgetStackCard(
+                                slot = slot,
+                                settings = settings,
+                                widgetHostManager = widgetHostManager,
+                                stepsToday = stepsToday,
+                                stepSensorAvailable = stepSensorAvailable,
+                                hasStepPermission = hasStepPermission,
+                                stepHistory = stepHistory,
+                                weatherState = weatherState,
+                                telemetry = telemetry,
+                                screenTimeVelocity = screenTimeVelocity,
+                                contextEngine = contextEngine,
+                                onRequestStepSync = onRequestStepSync,
+                                onCycleTimeFormat = onCycleTimeFormat,
+                                onRefreshWeather = onRefreshWeather,
+                                onCycleYearMode = onCycleYearMode,
+                                onToggleDeepFocus = onToggleDeepFocus,
+                                onOpenUsageAccess = onOpenUsageAccess,
+                                onOpenWidgetSettings = { onOpenSettings(5) },
+                                onOpenStackEditor = onOpenStackEditor,
+                                editMode = editLayoutMode,
+                                onLongPressSlot = { s ->
+                                    enterEditMode()
+                                    onOpenStackEditor(s)
+                                },
+                                onUpdateSlot = { tr -> onUpdateWidgetSlot(slot.id, tr) },
+                                onDeleteSlot = { onDeleteWidgetSlot(slot.id) },
+                                mediaState = mediaState,
+                                hasBluetoothPermission = hasBluetoothPermission,
+                                onRequestBluetoothPermission = onRequestBluetoothPermission,
+                                modifier = singleWidthMod
+                            )
+                        }
                     }
 
                     // Dynamic Most Used Apps Section on Page 0
@@ -383,7 +684,12 @@ fun HomeScreenCanvas(
                         }
                         if (top8.isNotEmpty()) {
                             NothingSurfaceCard(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {},
+                                        onLongClick = { enterEditMode() }
+                                    ),
                                 cornerRadius = 20.dp,
                                 backgroundColor = palette.surface.copy(alpha = 0.68f)
                             ) {
@@ -706,9 +1012,7 @@ fun HomeScreenCanvas(
                         ) {
                             appsInDock.forEach { app ->
                                 val custom = settings.appCustomizations[app.packageName]
-                                val bitmap = remember(app.packageName, iconVersion) {
-                                    appIndexer.getCachedIcon(app.packageName, app.activityName)
-                                }
+                                val bitmap = appIndexer.rememberAppIcon(app.packageName, app.activityName, iconVersion)
                                 val dockInteraction = remember(app.packageName) { MutableInteractionSource() }
                                 val dockPressed by dockInteraction.collectIsPressedAsState()
                                 val dockScale by animateFloatAsState(
@@ -719,10 +1023,16 @@ fun HomeScreenCanvas(
                                 Box(
                                     modifier = Modifier
                                         .minimumInteractiveComponentSize()
-                                        .graphicsLayer {
-                                            scaleX = dockScale
-                                            scaleY = dockScale
-                                        }
+                                        .then(
+                                            if (dockScale != 1f) {
+                                                Modifier.graphicsLayer {
+                                                    scaleX = dockScale
+                                                    scaleY = dockScale
+                                                }
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
                                         .combinedClickable(
                                             interactionSource = dockInteraction,
                                             indication = LocalIndication.current,
@@ -905,13 +1215,13 @@ private fun HomeAppTile(
 ) {
     val palette = LocalNothingPalette.current
     val custom = settings.appCustomizations[app.packageName]
-    val label = NothingTypographyEngine.formatText(
-        custom?.customLabel ?: app.label,
-        settings.typographyHome.textCase
-    )
-    val bitmap = remember(app.packageName, iconVersion) {
-        appIndexer.getCachedIcon(app.packageName, app.activityName)
+    val label = remember(custom?.customLabel, app.label, settings.typographyHome.textCase) {
+        NothingTypographyEngine.formatText(
+            custom?.customLabel ?: app.label,
+            settings.typographyHome.textCase
+        )
     }
+    val bitmap = appIndexer.rememberAppIcon(app.packageName, app.activityName, iconVersion)
     val interactionSource = remember(app.packageName) { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -922,10 +1232,16 @@ private fun HomeAppTile(
 
     Column(
         modifier = modifier
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
+            .then(
+                if (pressScale != 1f) {
+                    Modifier.graphicsLayer {
+                        scaleX = pressScale
+                        scaleY = pressScale
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 interactionSource = interactionSource,
@@ -1009,9 +1325,7 @@ private fun FolderTile(
                 FolderCoverStyle.SINGLE_ICON -> {
                     val first = folderApps.firstOrNull()
                     val bmp = first?.let {
-                        remember(it.packageName, iconVersion) {
-                            appIndexer.getCachedIcon(it.packageName, it.activityName)
-                        }
+                        appIndexer.rememberAppIcon(it.packageName, it.activityName, iconVersion)
                     }
                     MaskedAppIcon(
                         iconBitmap = bmp,
@@ -1027,9 +1341,7 @@ private fun FolderTile(
                         folderApps.take(maxIcons).chunked(gridCols).forEach { row ->
                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                 row.forEach { app ->
-                                    val bmp = remember(app.packageName, iconVersion) {
-                                        appIndexer.getCachedIcon(app.packageName, app.activityName)
-                                    }
+                                    val bmp = appIndexer.rememberAppIcon(app.packageName, app.activityName, iconVersion)
                                     MaskedAppIcon(
                                         iconBitmap = bmp,
                                         maskConfig = settings.iconMask,

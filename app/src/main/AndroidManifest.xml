@@ -55,10 +55,10 @@
         android:theme="@style/Theme.MyApplication">
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density"
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTask"
-            android:stateNotNeeded="true"
             android:theme="@style/Theme.MyApplication"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

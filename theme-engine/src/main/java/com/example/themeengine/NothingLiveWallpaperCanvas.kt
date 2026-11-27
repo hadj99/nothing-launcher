@@ -37,10 +37,18 @@ import kotlin.math.sin
 fun NothingLiveWallpaperCanvas(
     theme: SurfaceThemeConfig,
     deepFocusActive: Boolean,
+    paused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val palette = LocalNothingPalette.current
+
+    if (paused) {
+        Canvas(modifier = modifier.fillMaxSize()) {
+            drawRect(color = palette.background)
+        }
+        return
+    }
 
     var tiltX by remember { mutableFloatStateOf(0f) }
     var tiltY by remember { mutableFloatStateOf(0f) }

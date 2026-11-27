@@ -192,6 +192,9 @@ fun resolveMaskShape(
     }
 }
 
+private val GrayscaleColorFilter: ColorFilter =
+    ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+
 @Composable
 fun MaskedAppIcon(
     iconBitmap: ImageBitmap?,
@@ -248,25 +251,30 @@ fun MaskedAppIcon(
             maskConfig.duotoneFilter && !dimmedForFocus -> {
                 ColorFilter.tint(palette.accent.copy(alpha = 0.88f), BlendMode.Color)
             }
-            effectiveMonochrome -> {
-                val matrix = ColorMatrix().apply { setToSaturation(0f) }
-                ColorFilter.colorMatrix(matrix)
-            }
+            effectiveMonochrome -> GrayscaleColorFilter
             else -> null
         }
     }
 
     val innerPad = if (effectiveShape == IconMaskShape.RAW) 0.dp else maskConfig.innerPaddingDp.coerceIn(0f, 18f).dp
     val borderWidth = if (effectiveShape == IconMaskShape.RAW) 0.dp else maskConfig.borderWidthDp.coerceIn(0f, 4f).dp
+    val needsLayer = effectiveScale != 1f || dimmedForFocus
+    val needsDotOverlay = maskConfig.dotMatrixOverlay && effectiveShape != IconMaskShape.RAW
 
     Box(
         modifier = modifier
             .size(baseSize)
-            .graphicsLayer {
-                scaleX = effectiveScale
-                scaleY = effectiveScale
-                alpha = if (dimmedForFocus) 0.42f else 1f
-            },
+            .then(
+                if (needsLayer) {
+                    Modifier.graphicsLayer {
+                        scaleX = effectiveScale
+                        scaleY = effectiveScale
+                        alpha = if (dimmedForFocus) 0.42f else 1f
+                    }
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -292,25 +300,29 @@ fun MaskedAppIcon(
                     } else Modifier
                 )
                 .padding(innerPad)
-                .drawWithContent {
-                    drawContent()
-                    if (maskConfig.dotMatrixOverlay && effectiveShape != IconMaskShape.RAW) {
-                        val step = min(size.width, size.height) / 9f
-                        var y = step * 0.5f
-                        while (y < size.height) {
-                            var x = step * 0.5f
-                            while (x < size.width) {
-                                drawCircle(
-                                    color = Color(0x28000000),
-                                    radius = step * 0.16f,
-                                    center = Offset(x, y)
-                                )
-                                x += step
+                .then(
+                    if (needsDotOverlay) {
+                        Modifier.drawWithContent {
+                            drawContent()
+                            val step = min(size.width, size.height) / 9f
+                            var y = step * 0.5f
+                            while (y < size.height) {
+                                var x = step * 0.5f
+                                while (x < size.width) {
+                                    drawCircle(
+                                        color = Color(0x28000000),
+                                        radius = step * 0.16f,
+                                        center = Offset(x, y)
+                                    )
+                                    x += step
+                                }
+                                y += step
                             }
-                            y += step
                         }
+                    } else {
+                        Modifier
                     }
-                },
+                ),
             contentAlignment = Alignment.Center
         ) {
             when {

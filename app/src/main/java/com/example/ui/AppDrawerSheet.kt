@@ -23,10 +23,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -47,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,8 +63,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,8 +81,10 @@ import com.example.coreui.DotMatrixDivider
 import com.example.coreui.MaskedAppIcon
 import com.example.coreui.NothingPillChip
 import com.example.coreui.NothingSurfaceCard
+import com.example.settingsstore.model.BadgeStyle
 import com.example.settingsstore.model.DrawerMode
 import com.example.settingsstore.model.DrawerTabPosition
+import com.example.settingsstore.model.IconMaskConfig
 import com.example.settingsstore.model.LauncherSettings
 import com.example.themeengine.LocalNothingPalette
 import com.example.themeengine.NothingTypographyEngine
@@ -83,6 +92,17 @@ import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+
+@Immutable
+private data class PreparedDrawerApp(
+    val app: IndexedApp,
+    val displayLabel: String,
+    val displayCategory: String,
+    val customImageUri: String?,
+    val customGlyphVector: ImageVector?,
+    val monochromeOverride: Boolean?,
+    val iconScaleOverride: Float?
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -93,6 +113,8 @@ fun AppDrawerSheet(
     iconVersion: Int,
     badgeCounts: Map<String, Int> = emptyMap(),
     contextHiddenPackages: Set<String> = emptySet(),
+    gridState: LazyGridState = rememberLazyGridState(),
+    listState: LazyListState = rememberLazyListState(),
     onAppClick: (IndexedApp) -> Unit,
     onAppLongPress: (IndexedApp) -> Unit,
     onOpenSearch: () -> Unit,
@@ -103,35 +125,56 @@ fun AppDrawerSheet(
     BackHandler { onDismiss() }
     val palette = LocalNothingPalette.current
 
-    val visibleApps = remember(apps, settings.appCustomizations, contextHiddenPackages) {
-        apps.filter { app ->
-            val custom = settings.appCustomizations[app.packageName]
-            custom?.hidden != true && custom?.lockedInVault != true && app.packageName !in contextHiddenPackages
-        }.sortedWith(
-            compareByDescending<IndexedApp> {
-                settings.appCustomizations[it.packageName]?.pinnedToTop == true
-            }.thenBy {
-                (settings.appCustomizations[it.packageName]?.customLabel ?: it.label).lowercase()
+    // Pre-filter, sort, and format labels once outside scroll frames
+    val preparedApps = remember(
+        apps,
+        settings.appCustomizations,
+        contextHiddenPackages,
+        settings.typographyDrawer.textCase
+    ) {
+        val textCase = settings.typographyDrawer.textCase
+        val customizations = settings.appCustomizations
+        apps.asSequence()
+            .filter { app ->
+                val custom = customizations[app.packageName]
+                custom?.hidden != true && custom?.lockedInVault != true && app.packageName !in contextHiddenPackages
             }
-        )
+            .sortedWith(
+                compareByDescending<IndexedApp> {
+                    customizations[it.packageName]?.pinnedToTop == true
+                }.thenBy {
+                    (customizations[it.packageName]?.customLabel ?: it.label).lowercase()
+                }
+            )
+            .map { app ->
+                val custom = customizations[app.packageName]
+                val rawLabel = custom?.customLabel ?: app.label
+                PreparedDrawerApp(
+                    app = app,
+                    displayLabel = NothingTypographyEngine.formatText(rawLabel, textCase),
+                    displayCategory = custom?.customCategory ?: app.category,
+                    customImageUri = custom?.customImageUri,
+                    customGlyphVector = NothingGlyphCatalog.resolve(custom?.customGlyphId),
+                    monochromeOverride = custom?.monochromeOverride,
+                    iconScaleOverride = custom?.iconScaleOverride
+                )
+            }
+            .toList()
     }
 
-    val drawerStyle = remember(settings.typographyDrawer) {
+    val drawerTextStyle = remember(settings.typographyDrawer, palette.textPrimary) {
         NothingTypographyEngine.resolveTextStyle(settings.typographyDrawer)
+            .copy(color = palette.textPrimary)
     }
 
-    val categories = remember(visibleApps, settings.appCustomizations) {
-        val cats = visibleApps.map { app ->
-            settings.appCustomizations[app.packageName]?.customCategory ?: app.category
-        }.distinct().sorted()
+    val categories = remember(preparedApps) {
+        val cats = preparedApps.map { it.displayCategory }.distinct().sorted()
         listOf("All") + cats
     }
     var selectedCategory by remember { mutableStateOf("All") }
-    val filteredApps = remember(visibleApps, selectedCategory, settings.appCustomizations) {
-        if (selectedCategory == "All") visibleApps
-        else visibleApps.filter {
-            (settings.appCustomizations[it.packageName]?.customCategory ?: it.category) == selectedCategory
-        }
+    val filteredApps = remember(preparedApps, selectedCategory) {
+        if (selectedCategory == "All") preparedApps
+        else preparedApps.filter { it.displayCategory == selectedCategory }
     }
 
     Column(
@@ -213,79 +256,58 @@ fun AppDrawerSheet(
             when (settings.drawerMode) {
                 DrawerMode.VERTICAL_LIST -> {
                     LazyColumn(
+                        state = listState,
                         contentPadding = PaddingValues(vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(visibleApps, key = { it.packageName }) { app ->
-                            val custom = settings.appCustomizations[app.packageName]
-                            val label = NothingTypographyEngine.formatText(
-                                custom?.customLabel ?: app.label,
-                                settings.typographyDrawer.textCase
+                        items(
+                            items = preparedApps,
+                            key = { it.app.packageName },
+                            contentType = { "drawer_list_item" }
+                        ) { item ->
+                            DrawerListAppRow(
+                                item = item,
+                                maskConfig = settings.iconMask,
+                                appIndexer = appIndexer,
+                                iconVersion = iconVersion,
+                                badgeCount = badgeCounts[item.app.packageName] ?: 0,
+                                badgeStyle = settings.badgeStyle,
+                                deepFocusActive = settings.deepFocusActive,
+                                labelStyle = drawerTextStyle,
+                                secondaryColor = palette.textSecondary,
+                                onAppClick = onAppClick,
+                                onAppLongPress = onAppLongPress
                             )
-                            val bitmap = remember(app.packageName, iconVersion) {
-                                appIndexer.getCachedIcon(app.packageName, app.activityName)
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .combinedClickable(
-                                        onClick = { onAppClick(app) },
-                                        onLongClick = { onAppLongPress(app) }
-                                    )
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                MaskedAppIcon(
-                                    iconBitmap = bitmap,
-                                    maskConfig = settings.iconMask,
-                                    baseSize = 42.dp,
-                                    customImageUri = custom?.customImageUri,
-                                    customGlyphVector = NothingGlyphCatalog.resolve(custom?.customGlyphId),
-                                    monochromeOverride = custom?.monochromeOverride,
-                                    scaleOverride = custom?.iconScaleOverride,
-                                    badgeCount = badgeCounts[app.packageName] ?: 0,
-                                    badgeStyle = settings.badgeStyle,
-                                    dimmedForFocus = settings.deepFocusActive
-                                )
-                                Spacer(Modifier.width(14.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = label,
-                                        style = drawerStyle.copy(color = palette.textPrimary),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = custom?.customCategory ?: app.category,
-                                        fontSize = 11.sp,
-                                        color = palette.textSecondary
-                                    )
-                                }
-                            }
                         }
                     }
                 }
 
                 DrawerMode.ALPHABETICAL_GRID, DrawerMode.CATEGORIZED_TABS -> {
-                    val listToShow = if (settings.drawerMode == DrawerMode.CATEGORIZED_TABS) filteredApps else visibleApps
+                    val listToShow = if (settings.drawerMode == DrawerMode.CATEGORIZED_TABS) filteredApps else preparedApps
                     val cols = settings.grid.drawerColumns.coerceIn(2, 12)
                     LazyVerticalGrid(
+                        state = gridState,
                         columns = GridCells.Fixed(cols),
                         contentPadding = PaddingValues(vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(settings.grid.horizontalPaddingDp.dp),
                         verticalArrangement = Arrangement.spacedBy(settings.grid.verticalPaddingDp.dp)
                     ) {
-                        items(listToShow, key = { it.packageName }) { app ->
+                        items(
+                            items = listToShow,
+                            key = { it.app.packageName },
+                            contentType = { "drawer_grid_tile" }
+                        ) { item ->
                             DrawerGridAppTile(
-                                app = app,
-                                settings = settings,
+                                item = item,
+                                maskConfig = settings.iconMask,
                                 appIndexer = appIndexer,
                                 iconVersion = iconVersion,
-                                badgeCount = badgeCounts[app.packageName] ?: 0,
-                                drawerStyle = drawerStyle,
-                                onClick = { onAppClick(app) },
-                                onLongClick = { onAppLongPress(app) }
+                                badgeCount = badgeCounts[item.app.packageName] ?: 0,
+                                badgeStyle = settings.badgeStyle,
+                                deepFocusActive = settings.deepFocusActive,
+                                labelStyle = drawerTextStyle,
+                                onAppClick = onAppClick,
+                                onAppLongPress = onAppLongPress
                             )
                         }
                     }
@@ -295,7 +317,7 @@ fun AppDrawerSheet(
                     val cols = settings.grid.drawerColumns.coerceIn(2, 12)
                     val rows = settings.grid.drawerRows.coerceIn(2, 12)
                     val perPage = (cols * rows).coerceAtLeast(4)
-                    val chunks = remember(visibleApps, perPage) { visibleApps.chunked(perPage) }
+                    val chunks = remember(preparedApps, perPage) { preparedApps.chunked(perPage) }
                     val pagerState = rememberPagerState(pageCount = { chunks.size.coerceAtLeast(1) })
                     Column(modifier = Modifier.fillMaxSize()) {
                         HorizontalPager(
@@ -309,16 +331,22 @@ fun AppDrawerSheet(
                                 horizontalArrangement = Arrangement.spacedBy(settings.grid.horizontalPaddingDp.dp),
                                 verticalArrangement = Arrangement.spacedBy(settings.grid.verticalPaddingDp.dp)
                             ) {
-                                items(pageApps, key = { it.packageName }) { app ->
+                                items(
+                                    items = pageApps,
+                                    key = { it.app.packageName },
+                                    contentType = { "drawer_grid_tile" }
+                                ) { item ->
                                     DrawerGridAppTile(
-                                        app = app,
-                                        settings = settings,
+                                        item = item,
+                                        maskConfig = settings.iconMask,
                                         appIndexer = appIndexer,
                                         iconVersion = iconVersion,
-                                        badgeCount = badgeCounts[app.packageName] ?: 0,
-                                        drawerStyle = drawerStyle,
-                                        onClick = { onAppClick(app) },
-                                        onLongClick = { onAppLongPress(app) }
+                                        badgeCount = badgeCounts[item.app.packageName] ?: 0,
+                                        badgeStyle = settings.badgeStyle,
+                                        deepFocusActive = settings.deepFocusActive,
+                                        labelStyle = drawerTextStyle,
+                                        onAppClick = onAppClick,
+                                        onAppLongPress = onAppLongPress
                                     )
                                 }
                             }
@@ -352,50 +380,111 @@ fun AppDrawerSheet(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DrawerGridAppTile(
-    app: IndexedApp,
-    settings: LauncherSettings,
+private fun DrawerListAppRow(
+    item: PreparedDrawerApp,
+    maskConfig: IconMaskConfig,
     appIndexer: AppIndexerRepository,
     iconVersion: Int,
     badgeCount: Int,
-    drawerStyle: androidx.compose.ui.text.TextStyle,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
+    badgeStyle: BadgeStyle,
+    deepFocusActive: Boolean,
+    labelStyle: TextStyle,
+    secondaryColor: Color,
+    onAppClick: (IndexedApp) -> Unit,
+    onAppLongPress: (IndexedApp) -> Unit
 ) {
-    val palette = LocalNothingPalette.current
-    val custom = settings.appCustomizations[app.packageName]
-    val label = NothingTypographyEngine.formatText(
-        custom?.customLabel ?: app.label,
-        settings.typographyDrawer.textCase
+    val bitmap = appIndexer.rememberAppIcon(
+        packageName = item.app.packageName,
+        activityName = item.app.activityName,
+        iconVersion = iconVersion
     )
-    val bitmap = remember(app.packageName, iconVersion) {
-        appIndexer.getCachedIcon(app.packageName, app.activityName)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .combinedClickable(
+                onClick = { onAppClick(item.app) },
+                onLongClick = { onAppLongPress(item.app) }
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MaskedAppIcon(
+            iconBitmap = bitmap,
+            maskConfig = maskConfig,
+            baseSize = 42.dp,
+            customImageUri = item.customImageUri,
+            customGlyphVector = item.customGlyphVector,
+            monochromeOverride = item.monochromeOverride,
+            scaleOverride = item.iconScaleOverride,
+            badgeCount = badgeCount,
+            badgeStyle = badgeStyle,
+            dimmedForFocus = deepFocusActive
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.displayLabel,
+                style = labelStyle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = item.displayCategory,
+                fontSize = 11.sp,
+                color = secondaryColor
+            )
+        }
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DrawerGridAppTile(
+    item: PreparedDrawerApp,
+    maskConfig: IconMaskConfig,
+    appIndexer: AppIndexerRepository,
+    iconVersion: Int,
+    badgeCount: Int,
+    badgeStyle: BadgeStyle,
+    deepFocusActive: Boolean,
+    labelStyle: TextStyle,
+    onAppClick: (IndexedApp) -> Unit,
+    onAppLongPress: (IndexedApp) -> Unit
+) {
+    val bitmap = appIndexer.rememberAppIcon(
+        packageName = item.app.packageName,
+        activityName = item.app.activityName,
+        iconVersion = iconVersion
+    )
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(
+                onClick = { onAppClick(item.app) },
+                onLongClick = { onAppLongPress(item.app) }
+            )
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         MaskedAppIcon(
             iconBitmap = bitmap,
-            maskConfig = settings.iconMask,
+            maskConfig = maskConfig,
             baseSize = 48.dp,
-            customImageUri = custom?.customImageUri,
-            customGlyphVector = NothingGlyphCatalog.resolve(custom?.customGlyphId),
-            monochromeOverride = custom?.monochromeOverride,
-            scaleOverride = custom?.iconScaleOverride,
+            customImageUri = item.customImageUri,
+            customGlyphVector = item.customGlyphVector,
+            monochromeOverride = item.monochromeOverride,
+            scaleOverride = item.iconScaleOverride,
             badgeCount = badgeCount,
-            badgeStyle = settings.badgeStyle,
-            dimmedForFocus = settings.deepFocusActive
+            badgeStyle = badgeStyle,
+            dimmedForFocus = deepFocusActive
         )
-        Spacer(Modifier.height(settings.iconMask.labelOffsetDp.dp))
+        Spacer(Modifier.height(maskConfig.labelOffsetDp.dp))
         Text(
-            text = label,
-            style = drawerStyle.copy(color = palette.textPrimary),
+            text = item.displayLabel,
+            style = labelStyle,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
@@ -578,7 +667,7 @@ fun BiometricVaultSheet(
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(vaultApps, key = { it.packageName }) { app ->
                             val custom = settings.appCustomizations[app.packageName]
-                            val bitmap = appIndexer.getCachedIcon(app.packageName, app.activityName)
+                            val bitmap = appIndexer.rememberAppIcon(app.packageName, app.activityName)
                             NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
                                 Row(
                                     modifier = Modifier
@@ -678,7 +767,7 @@ fun MindfulFrictionCountdownDialog(
                     }
                     Text(
                         text = if (remaining > 0) "${remaining}s" else "READY",
-                        fontFamily = NothingTypographyEngine.ndot77Family,
+                        fontFamily = NothingTypographyEngine.ndot55Family,
                         fontSize = 22.sp,
                         color = palette.textPrimary
                     )

@@ -506,17 +506,24 @@ fun NothingCustomWidgetCard(
     mediaState: ActiveMediaState = ActiveMediaState(),
     hasBluetoothPermission: Boolean = true,
     onRequestBluetoothPermission: () -> Unit = {},
+    cardHeightDp: Int = 152,
+    contentScale: Float = 1f,
     modifier: Modifier = Modifier
 ) {
     val palette = LocalNothingPalette.current
-    val wConfig = settings.widgetConfigFor(widgetType)
+    val baseConfig = settings.widgetConfigFor(widgetType)
+    val wConfig = if (contentScale == 1f) {
+        baseConfig
+    } else {
+        baseConfig.copy(fontSizeScale = (baseConfig.fontSizeScale * contentScale).coerceIn(0.6f, 1.75f))
+    }
     val effectiveOpacity = (wConfig.opacity * settings.theme.widgetOpacity).coerceIn(0.15f, 1f)
     val borderDp = ((wConfig.borderWidthDp + settings.theme.widgetBorderDp) * 0.5f).coerceIn(0f, 4f).dp
 
     NothingSurfaceCard(
         modifier = modifier
             .fillMaxWidth()
-            .height(152.dp),
+            .height(cardHeightDp.coerceIn(92, 360).dp),
         cornerRadius = 22.dp,
         borderWidth = borderDp,
         backgroundColor = palette.widgetBg.copy(alpha = effectiveOpacity),

@@ -2,7 +2,6 @@ package com.example
 
 import android.Manifest
 import android.app.Activity
-import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Intent
 import android.os.Build
@@ -14,13 +13,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,10 +30,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,10 +52,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.animationphysics.LauncherPhysicsEngine
 import com.example.animationphysics.ShakeGestureObserver
 import com.example.appindexer.IndexedApp
+import com.example.coreui.DotMatrixDivider
 import com.example.coreui.NothingPillChip
 import com.example.coreui.NothingSurfaceCard
 import com.example.settingsstore.model.CustomWidgetType
@@ -66,6 +72,7 @@ import com.example.ui.LongPressAppMenuDialog
 import com.example.ui.MindfulFrictionCountdownDialog
 import com.example.ui.SettingsHubScreen
 import com.example.universalsearch.UniversalSearchOverlay
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LauncherViewModel by viewModels()
@@ -87,19 +94,14 @@ class MainActivity : ComponentActivity() {
         pendingBindWidgetId = -1
     }
 
-    override fun onStart() {
-        super.onStart()
-        viewModel.widgetHostManager.startListening()
-    }
-
     override fun onResume() {
         super.onResume()
-        viewModel.refreshAppsAndStats()
+        viewModel.onLauncherResumed()
     }
 
-    override fun onStop() {
-        super.onStop()
+    override fun onDestroy() {
         viewModel.widgetHostManager.stopListening()
+        super.onDestroy()
     }
 
     private fun handleBindSystemWidget(slot: WidgetStackSlot, provider: AppWidgetProviderInfo) {
@@ -128,36 +130,45 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Keep system widget host listening across app switches so returning home is instant
+        viewModel.widgetHostManager.startListening()
         enableEdgeToEdge()
         setContent {
-            val settings by viewModel.settings.collectAsStateWithLifecycle()
-            val allApps by viewModel.allApps.collectAsStateWithLifecycle()
-            val mostUsedApps by viewModel.mostUsedApps.collectAsStateWithLifecycle()
-            val iconVersion by viewModel.iconVersion.collectAsStateWithLifecycle()
-            val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-            val searchState by viewModel.searchState.collectAsStateWithLifecycle()
-            val recentQueries by viewModel.recentQueries.collectAsStateWithLifecycle()
-            val isSearchVisible by viewModel.isSearchVisible.collectAsStateWithLifecycle()
-            val isDrawerVisible by viewModel.isDrawerVisible.collectAsStateWithLifecycle()
-            val isSettingsVisible by viewModel.isSettingsVisible.collectAsStateWithLifecycle()
-            val settingsInitialTab by viewModel.settingsInitialTab.collectAsStateWithLifecycle()
-            val isVaultVisible by viewModel.isVaultVisible.collectAsStateWithLifecycle()
-            val vaultUnlocked by viewModel.vaultUnlocked.collectAsStateWithLifecycle()
-            val showPinPrompt by viewModel.showPinPrompt.collectAsStateWithLifecycle()
-            val pendingFrictionApp by viewModel.pendingFrictionApp.collectAsStateWithLifecycle()
-            val themePresets by viewModel.themePresets.collectAsStateWithLifecycle()
-            val installedIconPacks by viewModel.installedIconPacks.collectAsStateWithLifecycle()
-            val stepHistory by viewModel.stepHistory.collectAsStateWithLifecycle()
-            val todaySteps by viewModel.todaySteps.collectAsStateWithLifecycle()
-            val stepSensorAvailable by viewModel.stepSensorAvailable.collectAsStateWithLifecycle()
-            val weatherState by viewModel.weatherState.collectAsStateWithLifecycle()
-            val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
-            val screenTimeVelocity by viewModel.screenTimeVelocity.collectAsStateWithLifecycle()
-            val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
-            val badgeCounts by viewModel.badgeCounts.collectAsStateWithLifecycle()
-            val mediaState by viewModel.mediaState.collectAsStateWithLifecycle()
-            val contextHiddenPackages by viewModel.contextHiddenPackages.collectAsStateWithLifecycle()
-            val isAmbientAodVisible by viewModel.isAmbientAodVisible.collectAsStateWithLifecycle()
+            // collectAsState keeps state warm while in background so pressing Home never reloads
+            val settings by viewModel.settings.collectAsState()
+            val allApps by viewModel.allApps.collectAsState()
+            val mostUsedApps by viewModel.mostUsedApps.collectAsState()
+            val iconVersion by viewModel.iconVersion.collectAsState()
+            val searchQuery by viewModel.searchQuery.collectAsState()
+            val searchState by viewModel.searchState.collectAsState()
+            val recentQueries by viewModel.recentQueries.collectAsState()
+            val isSearchVisible by viewModel.isSearchVisible.collectAsState()
+            val isDrawerVisible by viewModel.isDrawerVisible.collectAsState()
+            val isSettingsVisible by viewModel.isSettingsVisible.collectAsState()
+            val settingsInitialTab by viewModel.settingsInitialTab.collectAsState()
+            val isVaultVisible by viewModel.isVaultVisible.collectAsState()
+            val vaultUnlocked by viewModel.vaultUnlocked.collectAsState()
+            val showPinPrompt by viewModel.showPinPrompt.collectAsState()
+            val pendingFrictionApp by viewModel.pendingFrictionApp.collectAsState()
+            val themePresets by viewModel.themePresets.collectAsState()
+            val installedIconPacks by viewModel.installedIconPacks.collectAsState()
+            val stepHistory by viewModel.stepHistory.collectAsState()
+            val todaySteps by viewModel.todaySteps.collectAsState()
+            val stepSensorAvailable by viewModel.stepSensorAvailable.collectAsState()
+            val weatherState by viewModel.weatherState.collectAsState()
+            val telemetry by viewModel.telemetry.collectAsState()
+            val screenTimeVelocity by viewModel.screenTimeVelocity.collectAsState()
+            val statusBanner by viewModel.statusBanner.collectAsState()
+            val badgeCounts by viewModel.badgeCounts.collectAsState()
+            val mediaState by viewModel.mediaState.collectAsState()
+            val contextHiddenPackages by viewModel.contextHiddenPackages.collectAsState()
+            val isAmbientAodVisible by viewModel.isAmbientAodVisible.collectAsState()
+
+            val drawerGridState = rememberLazyGridState()
+            val drawerListState = rememberLazyListState()
+
+            val anyOverlayOpen = isDrawerVisible || isSearchVisible || isSettingsVisible ||
+                isVaultVisible || isAmbientAodVisible
 
             var btPermissionTick by remember { mutableStateOf(0) }
             val hasBtPermission = remember(btPermissionTick) {
@@ -225,20 +236,25 @@ class MainActivity : ComponentActivity() {
                         onAddPage = { viewModel.addHomePage() },
                         onMoveHomeApp = { page, pkg, delta -> viewModel.moveHomeApp(page, pkg, delta) },
                         onMoveHomeAppToPage = { fromPage, pkg, toPage -> viewModel.moveHomeAppToPage(fromPage, pkg, toPage) },
-                        onOpenStackEditor = { slot -> editingStackSlot = slot }
+                        onOpenStackEditor = { slot -> editingStackSlot = slot },
+                        wallpaperPaused = anyOverlayOpen,
+                        onUpdateSettings = { viewModel.updateSettings(it) },
+                        onUpdateWidgetSlot = { id, tr -> viewModel.updateWidgetSlot(id, tr) },
+                        onAddWidgetSlot = { page -> viewModel.addWidgetSlot(page) },
+                        onDeleteWidgetSlot = { id -> viewModel.removeWidgetSlot(id) }
                     )
 
-                    // App Drawer Overlay
+                    // App Drawer Overlay (snappy hardware-friendly transition + preserved scroll state)
                     AnimatedVisibility(
                         visible = isDrawerVisible,
                         enter = slideInVertically(
-                            initialOffsetY = { it / 2 },
-                            animationSpec = LauncherPhysicsEngine.physicsSpring(settings.physics)
-                        ) + fadeIn(LauncherPhysicsEngine.launchTween(settings.physics)),
+                            initialOffsetY = { it / 4 },
+                            animationSpec = tween(durationMillis = 180)
+                        ) + fadeIn(tween(durationMillis = 150)),
                         exit = slideOutVertically(
-                            targetOffsetY = { it / 2 },
-                            animationSpec = LauncherPhysicsEngine.physicsSpring(settings.physics)
-                        ) + fadeOut(LauncherPhysicsEngine.launchTween(settings.physics))
+                            targetOffsetY = { it / 4 },
+                            animationSpec = tween(durationMillis = 150)
+                        ) + fadeOut(tween(durationMillis = 130))
                     ) {
                         AppDrawerSheet(
                             apps = allApps,
@@ -247,6 +263,8 @@ class MainActivity : ComponentActivity() {
                             iconVersion = iconVersion,
                             badgeCounts = badgeCounts,
                             contextHiddenPackages = contextHiddenPackages,
+                            gridState = drawerGridState,
+                            listState = drawerListState,
                             onAppClick = { viewModel.onAppClicked(it) },
                             onAppLongPress = { longPressedApp = it },
                             onOpenSearch = { viewModel.openSearch() },
@@ -396,26 +414,31 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // Widget stack quick editor
+                    // Widget Size & Stack Quick Editor (opened via long-press on any widget or stack pill)
                     editingStackSlot?.let { slot ->
-                        val latestSlot = settings.widgetStacks.firstOrNull { it.id == slot.id } ?: slot
-                        WidgetStackEditorDialog(
-                            slot = latestSlot,
-                            onToggleWidget = { wt ->
-                                viewModel.updateSettings { cfg ->
-                                    val updated = cfg.widgetStacks.map { s ->
-                                        if (s.id != latestSlot.id) s
-                                        else {
-                                            val list = s.stackedCustomWidgets.toMutableList()
-                                            if (wt in list) list.remove(wt) else list.add(wt)
-                                            s.copy(stackedCustomWidgets = list)
-                                        }
+                        val latestSlot = settings.widgetStacks.firstOrNull { it.id == slot.id }
+                        if (latestSlot == null) {
+                            editingStackSlot = null
+                        } else {
+                            WidgetStackEditorDialog(
+                                slot = latestSlot,
+                                onUpdateSlot = { transform ->
+                                    viewModel.updateWidgetSlot(latestSlot.id, transform)
+                                },
+                                onToggleWidget = { wt ->
+                                    viewModel.updateWidgetSlot(latestSlot.id) { s ->
+                                        val list = s.stackedCustomWidgets.toMutableList()
+                                        if (wt in list) list.remove(wt) else list.add(wt)
+                                        s.copy(stackedCustomWidgets = list)
                                     }
-                                    cfg.copy(widgetStacks = updated)
-                                }
-                            },
-                            onDismiss = { editingStackSlot = null }
-                        )
+                                },
+                                onDeleteSlot = {
+                                    viewModel.removeWidgetSlot(latestSlot.id)
+                                    editingStackSlot = null
+                                },
+                                onDismiss = { editingStackSlot = null }
+                            )
+                        }
                     }
 
                     // Status toast banner
@@ -447,26 +470,118 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun WidgetStackEditorDialog(
     slot: WidgetStackSlot,
+    onUpdateSlot: ((WidgetStackSlot) -> WidgetStackSlot) -> Unit,
     onToggleWidget: (CustomWidgetType) -> Unit,
+    onDeleteSlot: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val palette = LocalNothingPalette.current
+    val currentHeight = slot.heightDp.coerceIn(96, 340)
+    val currentScale = slot.contentScale.coerceIn(0.7f, 1.45f)
+    val isHalfWidth = slot.widthFraction <= 0.55f
+
     Dialog(onDismissRequest = onDismiss) {
         NothingSurfaceCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 22.dp) {
             Column(
-                modifier = Modifier.padding(18.dp),
+                modifier = Modifier
+                    .padding(18.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "EDIT WIDGET STACK",
+                    text = "RESIZE & CUSTOMIZE WIDGET",
                     fontFamily = NothingTypographyEngine.ndot55Family,
                     fontSize = 14.sp,
                     color = palette.accent
                 )
+
+                // Quick Size Presets (Small / Medium / Large / XL)
                 Text(
-                    text = "Select widgets to stack vertically in this slot. Swipe up/down on the widget to cycle.",
+                    text = "Widget Size Presets",
                     fontSize = 12.sp,
                     color = palette.textSecondary
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        Triple("Small", 112, 0.84f),
+                        Triple("Medium", 156, 1.0f),
+                        Triple("Large", 216, 1.12f),
+                        Triple("XL", 280, 1.25f)
+                    ).forEach { (label, h, sc) ->
+                        NothingPillChip(
+                            label = label,
+                            selected = kotlin.math.abs(currentHeight - h) <= 14,
+                            onClick = { onUpdateSlot { it.copy(heightDp = h, contentScale = sc) } },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // Exact Height Slider
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Widget Height", fontSize = 12.sp, color = palette.textPrimary)
+                    Text("${currentHeight}dp", fontSize = 12.sp, color = palette.accent)
+                }
+                Slider(
+                    value = currentHeight.toFloat(),
+                    onValueChange = { v -> onUpdateSlot { it.copy(heightDp = v.roundToInt()) } },
+                    valueRange = 96f..340f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = palette.accent,
+                        activeTrackColor = palette.accent
+                    )
+                )
+
+                // Width Span: Full vs Half (side-by-side)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    NothingPillChip(
+                        label = "Full Width",
+                        selected = !isHalfWidth,
+                        onClick = { onUpdateSlot { it.copy(widthFraction = 1.0f) } },
+                        modifier = Modifier.weight(1f)
+                    )
+                    NothingPillChip(
+                        label = "Half Width (1/2)",
+                        selected = isHalfWidth,
+                        onClick = { onUpdateSlot { it.copy(widthFraction = 0.5f) } },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Content / Text Scale Slider
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Text & Content Scale", fontSize = 12.sp, color = palette.textPrimary)
+                    Text("${(currentScale * 100).roundToInt()}%", fontSize = 12.sp, color = palette.accent)
+                }
+                Slider(
+                    value = currentScale,
+                    onValueChange = { v -> onUpdateSlot { it.copy(contentScale = v) } },
+                    valueRange = 0.72f..1.42f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = palette.accent,
+                        activeTrackColor = palette.accent
+                    )
+                )
+
+                DotMatrixDivider()
+
+                Text(
+                    text = "STACKED WIDGETS (SWIPE UP/DOWN TO CYCLE)",
+                    fontFamily = NothingTypographyEngine.ndot55Family,
+                    fontSize = 12.sp,
+                    color = palette.accent
                 )
                 CustomWidgetType.entries.chunked(2).forEach { pair ->
                     Row(
@@ -483,8 +598,19 @@ private fun WidgetStackEditorDialog(
                         }
                     }
                 }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { Text("Done") }
+
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDeleteSlot) {
+                        Text("Remove Block", color = palette.accent)
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("Done", color = palette.textPrimary)
+                    }
                 }
             }
         }

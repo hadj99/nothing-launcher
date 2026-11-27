@@ -458,7 +458,10 @@ data class WidgetStackSlot(
         CustomWidgetType.WEATHER
     ),
     val stackedSystemWidgetIds: List<Int> = emptyList(),
-    val activeIndex: Int = 0
+    val activeIndex: Int = 0,
+    val heightDp: Int = 156,
+    val widthFraction: Float = 1.0f,
+    val contentScale: Float = 1.0f
 )
 
 @Immutable

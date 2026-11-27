@@ -14,7 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class DotLauncherApplication : Application() {
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     lateinit var settingsRepository: SettingsRepository
         private set
@@ -40,6 +40,9 @@ class DotLauncherApplication : Application() {
         stepRepository = StepCounterRepository(this)
         weatherRepository = WeatherRepository(this)
         widgetHostManager = LauncherWidgetHostManager(this)
+
+        // Listen for actual app installs/updates/uninstalls instead of re-indexing on every resume
+        appIndexer.startPackageMonitor()
 
         appScope.launch {
             settingsRepository.initialize()
