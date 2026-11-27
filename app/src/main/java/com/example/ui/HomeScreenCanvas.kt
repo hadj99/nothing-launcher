@@ -3,7 +3,12 @@ package com.example.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -33,6 +38,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -49,6 +55,10 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Newspaper
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.LabelOff
+import androidx.compose.material.icons.rounded.Label
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -56,6 +66,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +78,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -206,6 +218,8 @@ fun HomeScreenCanvas(
     var activeFolder by remember { mutableStateOf<LauncherFolder?>(null) }
     var inlineExpandedFolderId by remember { mutableStateOf<String?>(null) }
     var editLayoutMode by remember { mutableStateOf(false) }
+    // The whole quick-tool set lives behind ONE small icon; tap to fan them out, tap to tuck them in.
+    var toolsOpen by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(enabled = editLayoutMode) {
         editLayoutMode = false
@@ -267,7 +281,7 @@ fun HomeScreenCanvas(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp),
+                    .padding(horizontal = settings.grid.marginDp.dp, vertical = 3.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -292,42 +306,33 @@ fun HomeScreenCanvas(
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    IconButton(
-                        onClick = { editLayoutMode = !editLayoutMode },
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
                         modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("home_edit_layout_button")
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (toolsOpen) palette.accent.copy(alpha = 0.22f)
+                                else palette.surface.copy(alpha = 0.88f)
+                            )
+                            .border(
+                                1.dp,
+                                if (toolsOpen) palette.accent else palette.borderSubtle,
+                                CircleShape
+                            )
+                            .clickable {
+                                toolsOpen = !toolsOpen
+                                NothingHaptics.performTick(context, settings.physics)
+                            }
+                            .testTag("home_tools_button"),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (editLayoutMode) Icons.Rounded.Check else Icons.Rounded.Edit,
-                            contentDescription = if (editLayoutMode) "Finish Layout Edit" else "Edit Home Layout",
-                            tint = if (editLayoutMode) palette.accent else palette.textPrimary
+                            imageVector = if (toolsOpen) Icons.Rounded.Close else Icons.Rounded.Build,
+                            contentDescription = if (toolsOpen) "Hide quick tools" else "Show quick tools",
+                            tint = if (toolsOpen) palette.accent else palette.textPrimary,
+                            modifier = Modifier.size(18.dp)
                         )
-                    }
-                    IconButton(
-                        onClick = onOpenAmbientAod,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("home_aod_button")
-                    ) {
-                        Icon(Icons.Rounded.Bedtime, "Always-On Desk Clock", tint = palette.textPrimary)
-                    }
-                    IconButton(
-                        onClick = onOpenNewsSpace,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("home_news_button")
-                    ) {
-                        Icon(Icons.Rounded.Newspaper, "News Space", tint = palette.accent)
-                    }
-                    IconButton(
-                        onClick = onOpenSearch,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("home_search_button")
-                    ) {
-                        Icon(Icons.Rounded.Search, "Universal Search", tint = palette.textPrimary)
                     }
                     Row(
                         modifier = Modifier
@@ -355,6 +360,97 @@ fun HomeScreenCanvas(
                             color = palette.accent
                         )
                     }
+                }
+            }
+
+            // Quick tools fan out of the single icon above (tap again to tuck them back in)
+            AnimatedVisibility(
+                visible = toolsOpen,
+                enter = fadeIn(tween(120)) + expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = tween(180)
+                ),
+                exit = fadeOut(tween(90)) + shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(150)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = settings.grid.marginDp.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(palette.surface.copy(alpha = 0.94f))
+                        .border(1.dp, palette.accent.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                        .testTag("home_tools_row"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HomeToolChip(
+                        icon = if (editLayoutMode) Icons.Rounded.Check else Icons.Rounded.Edit,
+                        label = if (editLayoutMode) "DONE" else "EDIT",
+                        accent = editLayoutMode,
+                        onClick = { editLayoutMode = !editLayoutMode }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.Bedtime,
+                        label = "SLEEP",
+                        accent = false,
+                        onClick = { toolsOpen = false; onOpenAmbientAod() }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.Newspaper,
+                        label = "NEWS",
+                        accent = false,
+                        onClick = { toolsOpen = false; onOpenNewsSpace() }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.Search,
+                        label = "SEARCH",
+                        accent = false,
+                        onClick = { toolsOpen = false; onOpenSearch() }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.Apps,
+                        label = "ALL APPS",
+                        accent = false,
+                        onClick = {
+                            toolsOpen = false
+                            scope.launch { rootPagerState.animateScrollToPage(1) }
+                        }
+                    )
+                    HomeToolChip(
+                        icon = Icons.Rounded.TextFields,
+                        label = "FONT",
+                        accent = false,
+                        onClick = {
+                            onUpdateSettings { cfg ->
+                                val order = listOf(
+                                    com.example.settingsstore.model.FontFamilyChoice.NDOT_55,
+                                    com.example.settingsstore.model.FontFamilyChoice.NTYPE_82,
+                                    com.example.settingsstore.model.FontFamilyChoice.SANS_CLEAN,
+                                    com.example.settingsstore.model.FontFamilyChoice.NDOT_77
+                                )
+                                val current = order.indexOf(cfg.typographyHome.fontChoice)
+                                val next = order[(current + 1).mod(order.size)]
+                                cfg.copy(typographyHome = cfg.typographyHome.copy(fontChoice = next))
+                            }
+                            NothingHaptics.performTick(context, settings.physics)
+                        }
+                    )
+                    HomeToolChip(
+                        icon = if (settings.grid.showAppLabels) Icons.Rounded.Label else Icons.Rounded.LabelOff,
+                        label = if (settings.grid.showAppLabels) "NAMES" else "NO NAMES",
+                        accent = !settings.grid.showAppLabels,
+                        onClick = {
+                            onUpdateSettings { cfg ->
+                                cfg.copy(grid = cfg.grid.copy(showAppLabels = !cfg.grid.showAppLabels))
+                            }
+                            NothingHaptics.performTick(context, settings.physics)
+                        }
+                    )
                 }
             }
 
@@ -607,8 +703,8 @@ fun HomeScreenCanvas(
                             }
                         }
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = settings.grid.marginDp.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .padding(horizontal = settings.grid.marginDp.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (pageIndex == 0) {
                         DailyGlanceHeader(
@@ -621,35 +717,38 @@ fun HomeScreenCanvas(
                         )
                     }
 
-                    // Per-page header pill (Page Name + Edit Layout shortcut)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = { if (editLayoutMode) editLayoutMode = false },
-                                onLongClick = {
-                                    NothingHaptics.performConfirm(context, settings.physics)
-                                    showHomeMenu = true
-                                }
-                            ),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${pageConfig.name.uppercase()}  •  ${cols}X$rows",
-                            fontFamily = NothingTypographyEngine.ntype82Family,
-                            fontSize = 10.sp,
-                            letterSpacing = 1.2.sp,
-                            color = palette.textSecondary
-                        )
-                        Text(
-                            text = if (editLayoutMode) "RESIZE WIDGETS BELOW  •  TAP DONE" else "HOLD TO CUSTOMIZE",
-                            fontFamily = NothingTypographyEngine.ndot55Family,
-                            fontSize = 9.5.sp,
-                            color = if (editLayoutMode) palette.accent else palette.textSecondary.copy(alpha = 0.65f),
-                            modifier = Modifier.clickable { editLayoutMode = !editLayoutMode }
-                        )
+                    // Page-name readout only while editing — otherwise the widgets sit right under the tools.
+                    if (editLayoutMode) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { editLayoutMode = false },
+                                    onLongClick = {
+                                        NothingHaptics.performConfirm(context, settings.physics)
+                                        showHomeMenu = true
+                                    }
+                                ),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${pageConfig.name.uppercase()}  •  ${cols}X$rows",
+                                fontFamily = NothingTypographyEngine.ntype82Family,
+                                fontSize = 10.sp,
+                                letterSpacing = 1.2.sp,
+                                color = palette.textSecondary
+                            )
+                            Text(
+                                text = "RESIZE WIDGETS BELOW  •  TAP DONE",
+                                fontFamily = NothingTypographyEngine.ndot55Family,
+                                fontSize = 9.5.sp,
+                                color = palette.accent,
+                                modifier = Modifier.clickable { editLayoutMode = false }
+                            )
+                        }
                     }
+
 
                     // Widget Stack(s) for this page — supports Full-Width or Half-Width side-by-side!
                     val pageSlots = remember(settings.widgetStacks, pageIndex) {
@@ -2058,60 +2157,61 @@ private fun DailyGlanceHeader(
     }
     val current = cards[cardIndex % cards.size]
 
-    NothingSurfaceCard(
+    // Compact "quick glance" pill anchored to the LEFT edge of the Home screen (👈 this side),
+    // wrap-content so it never pushes the widgets down.
+    Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(max = 250.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(palette.surface.copy(alpha = 0.82f))
+            .border(
+                1.dp,
+                if (current.accent) palette.accent.copy(alpha = 0.60f) else palette.borderSubtle,
+                RoundedCornerShape(999.dp)
+            )
             .clickable {
                 if (!calendarPermissionGranted) {
                     permissionLauncher.launch(android.Manifest.permission.READ_CALENDAR)
                 } else {
                     onOpenSettings(5)
                 }
-            },
-        cornerRadius = 18.dp,
-        backgroundColor = palette.surface.copy(alpha = 0.82f),
-        borderColor = if (current.accent) palette.accent.copy(alpha = 0.55f) else palette.borderSubtle
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(if (current.accent) palette.accent else palette.textSecondary)
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = current.label,
-                    fontFamily = NothingTypographyEngine.ndot55Family,
-                    fontSize = 9.sp,
-                    letterSpacing = 1.3.sp,
-                    color = if (current.accent) palette.accent else palette.textSecondary
-                )
-                Text(
-                    text = current.title,
-                    fontFamily = NothingTypographyEngine.ntype82Family,
-                    fontSize = 13.sp,
-                    color = palette.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
-            Text(
-                text = current.detail,
-                fontFamily = NothingTypographyEngine.ntype82Family,
-                fontSize = 10.5.sp,
-                color = palette.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp)
-            )
-        }
+            .padding(start = 9.dp, end = 12.dp, top = 5.dp, bottom = 5.dp)
+            .testTag("home_quick_glance"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(if (current.accent) palette.accent else palette.textSecondary)
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = current.label,
+            fontFamily = NothingTypographyEngine.ndot55Family,
+            fontSize = 8.5.sp,
+            letterSpacing = 1.1.sp,
+            color = if (current.accent) palette.accent else palette.textSecondary
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = current.title,
+            fontFamily = NothingTypographyEngine.ntype82Family,
+            fontSize = 11.5.sp,
+            color = palette.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = current.detail,
+            fontFamily = NothingTypographyEngine.ntype82Family,
+            fontSize = 9.5.sp,
+            color = palette.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -2151,4 +2251,46 @@ private fun queryNextCalendarEvent(context: Context): Pair<String, Long>? {
             }
         }
     }.getOrNull()
+}
+
+
+@Composable
+private fun HomeToolChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    accent: Boolean,
+    onClick: () -> Unit
+) {
+    val palette = LocalNothingPalette.current
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(
+                if (accent) palette.accent.copy(alpha = 0.22f)
+                else palette.background.copy(alpha = 0.55f)
+            )
+            .border(
+                1.dp,
+                if (accent) palette.accent else palette.borderSubtle,
+                RoundedCornerShape(999.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (accent) palette.accent else palette.textPrimary,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = label,
+            fontFamily = NothingTypographyEngine.ndot55Family,
+            fontSize = 9.5.sp,
+            letterSpacing = 0.7.sp,
+            color = if (accent) palette.accent else palette.textSecondary
+        )
+    }
 }

@@ -487,6 +487,7 @@ private val studioSearchIndex = listOf(
     StudioSettingEntry("Biometric App Vault", "PIN & fingerprint protected hidden apps", 6, listOf("vault", "hidden", "pin", "biometric")),
     StudioSettingEntry("Backup & Restore", "Export or import the full launcher configuration", 6, listOf("backup", "restore", "export", "import")),
     StudioSettingEntry("QR Share", "Share your setup as a QR payload", 6, listOf("qr", "share")),
+    StudioSettingEntry("Quick Tools Cluster", "One icon hides or reveals Edit, Sleep, News, Search, All Apps, Font & Names", 0, listOf("tools", "fab", "top bar", "cluster")),
     StudioSettingEntry("At a Glance Header", "Rotating calendar, weather, steps & battery glance card", 0, listOf("glance", "calendar", "at a glance")),
     StudioSettingEntry("Frame Rate Cap", "Adaptive or a hard 30 / 60 / 120 FPS ceiling", 4, listOf("fps", "frame rate", "hz", "refresh", "performance")),
     StudioSettingEntry("Sleep Screen Glyph Animation", "Animated aura, orbit dots & glyph equalizer on the desk clock", 4, listOf("aod", "sleep", "always on", "glyph", "animation"))
