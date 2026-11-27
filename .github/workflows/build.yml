@@ -89,29 +89,31 @@ jobs:
             echo "::error::$(cat "$f" | esc)"
           done
 
-      - name: Verify APK signature and stage v1.3 output
+      - name: Verify APK signature and stage v1.4 output
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk dist/DotOS-Launcher-v1.3.apk
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.3.apk
+          cp app/build/outputs/apk/release/app-release.apk dist/DotOS-Launcher-v1.4.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/DotOS-Launcher-v1.4.apk
           ls -lh dist/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: dotos-launcher-v1.3-apk
-          path: dist/DotOS-Launcher-v1.3.apk
+          name: dotos-launcher-v1.4-apk
+          path: dist/DotOS-Launcher-v1.4.apk
           if-no-files-found: error
 
-      - name: Create/Update GitHub Release v1.3.0
+      - name: Create/Update GitHub Release v1.4.0
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOTES=$(cat <<'EOF'
-          ### DotOS Launcher v1.3 (18 Major UX Upgrades — In-Place Update)
-          Install **DotOS-Launcher-v1.3.apk** directly over v1.0 / v1.1 / v1.2 — same package ID and signing key, so all your apps, layouts, and settings stay intact!
+          ### DotOS Launcher v1.4 (In-Place Update — Rolling Build)
+          Install **DotOS-Launcher-v1.4.apk** directly over v1.0 – v1.3 — same package ID and signing key (`versionCode 5`), so all your apps, layouts, and settings stay intact!
 
-          **Everything New in v1.3:**
+          **v1.4 is a rolling build:** the full v1.3 feature set below is included, and your requested updates are folded into this same release tag — re-download the APK to pick up the newest build (versionCode always increases so it installs straight over the previous one).
+
+          **Base feature set carried into v1.4:**
           - **App Drawer removed completely** — the drawer overlay and the dock drawer button are gone; the dock now holds **Phone · SMS · Camera · Chrome · Notes**, resolved through real system intents so every OEM works.
           - **TikTok-style swipe-up All Apps** — swipe up on Home for a vertical All Apps feed with **Most Used Apps** pinned on top; the Home Most Used section was removed as requested.
           - **Hide app names** — new "Show App Names" switch for a clean icon-only Home & Apps grid.
@@ -129,13 +131,13 @@ jobs:
           - **Performance** — widgets pause off-screen pages, single-DEX R8 build, lifecycle-aware sensors, and 0-recomposition Canvas draw scopes.
           EOF
           )
-          if gh release view v1.3.0 >/dev/null 2>&1; then
-            gh release upload v1.3.0 dist/DotOS-Launcher-v1.3.apk --clobber
-            gh release edit v1.3.0 --title "DotOS Launcher v1.3" --notes "$NOTES" --latest
+          if gh release view v1.4.0 >/dev/null 2>&1; then
+            gh release upload v1.4.0 dist/DotOS-Launcher-v1.4.apk --clobber
+            gh release edit v1.4.0 --title "DotOS Launcher v1.4" --notes "$NOTES" --latest
           else
-            gh release create v1.3.0 dist/DotOS-Launcher-v1.3.apk \
+            gh release create v1.4.0 dist/DotOS-Launcher-v1.4.apk \
               --target "${{ github.sha }}" \
-              --title "DotOS Launcher v1.3" \
+              --title "DotOS Launcher v1.4" \
               --notes "$NOTES" \
               --latest
           fi
@@ -147,7 +149,7 @@ jobs:
           python3 - <<'PY'
           import base64, hashlib, json, os, subprocess
 
-          apk_path = "dist/DotOS-Launcher-v1.3.apk"
+          apk_path = "dist/DotOS-Launcher-v1.4.apk"
           with open(apk_path, "rb") as f:
               data = f.read()
           sha256 = hashlib.sha256(data).hexdigest()
