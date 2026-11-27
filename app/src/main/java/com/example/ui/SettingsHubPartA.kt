@@ -372,9 +372,11 @@ private fun SurfaceWallpaperTab(
         NothingToggleRow(
             label = "Show App Names",
             description = "Turn off for a clean icon-only Home Screen and All Apps grid.",
-            checked = settings.showAppLabels,
+            checked = settings.grid.showAppLabels,
             onCheckedChange = { checked ->
-                onUpdateSettings { it.copy(showAppLabels = checked) }
+                onUpdateSettings { cfg ->
+                    cfg.copy(grid = cfg.grid.copy(showAppLabels = checked))
+                }
             },
             modifier = Modifier.testTag("toggle_show_app_labels")
         )

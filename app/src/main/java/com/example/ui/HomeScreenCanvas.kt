@@ -1316,7 +1316,7 @@ private fun HomeAppTile(
             badgeStyle = settings.badgeStyle,
             dimmedForFocus = settings.deepFocusActive
         )
-        if (settings.showAppLabels) {
+        if (settings.grid.showAppLabels) {
             Spacer(Modifier.height(settings.iconMask.labelOffsetDp.dp))
             Text(
                 text = label,
