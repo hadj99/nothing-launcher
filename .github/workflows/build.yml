@@ -30,7 +30,24 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug and Release APKs
-        run: ./gradlew assembleDebug assembleRelease --stacktrace
+        id: build
+        run: |
+          set +e
+          ./gradlew assembleDebug assembleRelease --stacktrace > build-output.log 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -n 60 build-output.log
+          exit $code
+
+      - name: Report build failure
+        if: failure()
+        run: |
+          if [ -f build-output.log ]; then
+            echo "::error::Gradle build failed. Last 120 lines of output:"
+            tail -n 120 build-output.log | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g' | while IFS= read -r line; do echo "::error::$line"; done
+          else
+            echo "::error::Gradle build failed (no build-output.log found)."
+          fi
 
       - name: Upload APKs
         uses: actions/upload-artifact@v7
